@@ -43,7 +43,10 @@ create policy "Authenticated users can create their listings"
 create policy "Owners can update their listings"
   on public.listings for update to authenticated
   using ((select auth.uid()) = owner_id)
-  with check ((select auth.uid()) = owner_id);
+  with check (
+    (select auth.uid()) = owner_id
+    and status in ('draft', 'pending_review')
+  );
 
 create policy "Owners can delete their listings"
   on public.listings for delete to authenticated
