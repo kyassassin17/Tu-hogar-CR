@@ -198,11 +198,11 @@ function PropertyMap({
           <Marker
             key={property.id}
             position={property.coordinates}
-            title={`${property.location}: ${formatPrice(property.price, currency)}`}
+            title={`${property.location}: ${formatPrice(property.price, currency, false, property.currency)}`}
             eventHandlers={{ click: () => onSelect(property) }}
             icon={L.divIcon({
               className: 'price-marker-container',
-              html: `<span class="price-marker ${property.featured ? 'promoted-marker' : ''} ${activeId === property.id ? 'active-marker' : ''}">${property.featured ? '<span class="marker-star">★</span>' : ''}${formatPrice(property.price, currency, true)}</span>`,
+              html: `<span class="price-marker ${property.featured ? 'promoted-marker' : ''} ${activeId === property.id ? 'active-marker' : ''}">${property.featured ? '<span class="marker-star">★</span>' : ''}${formatPrice(property.price, currency, true, property.currency)}</span>`,
               iconSize: [95, 38],
               iconAnchor: [47, 38],
             })}
@@ -313,7 +313,7 @@ function PropertyCard({
             {property.operation === 'buy' ? 'venta' : 'alquiler'}
           </div>
           <h3>
-            {formatPrice(property.price, currency)}
+            {formatPrice(property.price, currency, false, property.currency)}
             {property.operation === 'rent' && <small> / mes</small>}
           </h3>
           <p className="property-address">{property.location}</p>
@@ -536,9 +536,8 @@ function App() {
       province,
       type: data.get('type') as Property['type'],
       operation: data.get('operation') as Operation,
-      price:
-        Number(data.get('price')) /
-        (data.get('currency') === 'CRC' ? exchangeRate : 1),
+      price: Number(data.get('price')),
+      currency: data.get('currency') as Currency,
       beds: Number(data.get('beds')),
       baths: Number(data.get('baths')),
       area: Number(data.get('area')),
@@ -1760,7 +1759,12 @@ function App() {
                     {selected.operation === 'buy' ? 'venta' : 'alquiler'}
                   </span>
                   <h2>
-                    {formatPrice(selected.price, filters.currency)}
+                    {formatPrice(
+                      selected.price,
+                      filters.currency,
+                      false,
+                      selected.currency,
+                    )}
                     {selected.operation === 'rent' && <small> / mes</small>}
                   </h2>
                 </div>

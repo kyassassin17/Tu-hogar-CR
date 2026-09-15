@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  convertPrice,
   exchangeRate,
   filterProperties,
   formatPrice,
@@ -41,6 +42,8 @@ describe('Costa Rican property search', () => {
     })
     expect(colones).toEqual(dollars)
     expect(formatPrice(1000, 'CRC')).toBe('₡510,000')
+    expect(formatPrice(510000, 'CRC', false, 'CRC')).toBe('₡510,000')
+    expect(convertPrice(510000, 'CRC', 'USD')).toBe(1000)
   })
   it('sorts ascending and returns no matches for an unknown place', () => {
     const results = filterProperties(properties, {

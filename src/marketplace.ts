@@ -8,6 +8,7 @@ export type Property = {
   type: 'Casa' | 'Apartamento'
   operation: Operation
   price: number
+  currency?: Currency
   beds: number
   baths: number
   area: number
@@ -259,10 +260,13 @@ export function normalize(value: string) {
 }
 
 export function filterProperties(listings: Property[], filters: Filters) {
-  const rate = filters.currency === 'CRC' ? exchangeRate : 1
   return listings
     .filter((property) => {
-      const price = property.price * rate
+      const price = convertPrice(
+        property.price,
+        property.currency ?? 'USD',
+        filters.currency,
+      )
       return (
         property.operation === filters.operation &&
         normalize(`${property.location} ${property.title} Costa Rica`).includes(
@@ -277,9 +281,11 @@ export function filterProperties(listings: Property[], filters: Filters) {
     })
     .sort((first, second) =>
       filters.sort === 'price-asc'
-        ? first.price - second.price
+        ? convertPrice(first.price, first.currency ?? 'USD', filters.currency) -
+          convertPrice(second.price, second.currency ?? 'USD', filters.currency)
         : filters.sort === 'price-desc'
-          ? second.price - first.price
+          ? convertPrice(second.price, second.currency ?? 'USD', filters.currency) -
+            convertPrice(first.price, first.currency ?? 'USD', filters.currency)
           : filters.sort === 'newest'
             ? second.id.localeCompare(first.id)
             : Number(!!second.featured) - Number(!!first.featured),
@@ -290,11 +296,21 @@ export function formatPrice(
   price: number,
   currency: Currency,
   compact = false,
+  sourceCurrency: Currency = 'USD',
 ) {
-  const amount = price * (currency === 'CRC' ? exchangeRate : 1)
+  const amount = convertPrice(price, sourceCurrency, currency)
   if (compact && amount >= 1000000)
     return `${currency === 'CRC' ? '₡' : '$'}${Number((amount / 1000000).toFixed(1))} M`
   if (compact && amount >= 1000)
     return `${currency === 'CRC' ? '₡' : '$'}${Number((amount / 1000).toFixed(1))} mil`
   return `${currency === 'CRC' ? '₡' : '$'}${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(amount)}`
+}
+
+export function convertPrice(
+  price: number,
+  sourceCurrency: Currency,
+  targetCurrency: Currency,
+) {
+  if (sourceCurrency === targetCurrency) return price
+  return sourceCurrency === 'USD' ? price * exchangeRate : price / exchangeRate
 }
