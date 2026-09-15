@@ -75,9 +75,10 @@ The local listing flow is still a browser-only demo. The production foundation i
 
 1. Create a Supabase project and apply the migration with the Supabase CLI or SQL editor.
 2. Copy `.env.example` to `.env.local` and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. Never expose a service-role key in Vite or the browser.
-3. Enable an authentication provider and require an authenticated seller before inserting listings.
-4. Add a private Storage bucket for listing photos, signed upload policies, image moderation, and size/type limits.
-5. Connect the publish form to `listings`; create listings as `draft`, then use a server-side moderation workflow to approve them as `published`.
-6. Add server-side inquiry delivery, rate limits, audit logs, payment webhooks, receipts/refunds, privacy/terms pages, backups, monitoring, and a reviewed CRC/USD exchange-rate policy before accepting real money.
+3. Add repository Actions secrets named `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under GitHub Settings > Secrets and variables > Actions so the Pages build receives the same values. Do not commit `.env.local`.
+4. Enable an authentication provider and require an authenticated seller before inserting listings.
+5. Add a private Storage bucket for listing photos, signed upload policies, image moderation, and size/type limits.
+6. Connect the publish form to `listings`; create listings as `draft`, then use a server-side moderation workflow to approve them as `published`.
+7. Add server-side inquiry delivery, rate limits, audit logs, payment webhooks, receipts/refunds, privacy/terms pages, backups, monitoring, and a reviewed CRC/USD exchange-rate policy before accepting real money.
 
 The `currency` column stores the seller's original `USD` or `CRC` amount. Never convert and overwrite that value; convert only when rendering or filtering in a shopper-selected currency.
