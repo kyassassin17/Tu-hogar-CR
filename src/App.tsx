@@ -25,6 +25,7 @@ import {
   LayoutGrid,
   Leaf,
   LocateFixed,
+  LogOut,
   Map as MapIcon,
   MapPin,
   Menu,
@@ -45,10 +46,12 @@ import { MapContainer, Marker, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { User } from '@supabase/supabase-js'
 import Account from './Account'
-import { demoMode, supabase } from './lib/supabase'
+import ListingPhotoPicker from './ListingPhotoPicker'
+import { demoMode, requireSupabase, supabase } from './lib/supabase'
 import { createListing, fetchPublishedListings } from './lib/listings'
 import 'leaflet/dist/leaflet.css'
 import {
+  amenityOptions,
   exchangeRate,
   filterProperties,
   formatPrice,
@@ -303,7 +306,7 @@ function PropertyCard({
             )}
           </div>
           <span className="image-count">
-            <Images size={13} /> {demoMode ? 3 : 1}
+            <Images size={13} /> {property.images?.length || (demoMode ? 3 : 1)}
           </span>
           <span className="image-location">
             <MapPin size={13} />
@@ -394,12 +397,15 @@ const plans = [
 function App() {
   const [user, setUser] = useState<User | null>(null)
   const [authLoading, setAuthLoading] = useState(!demoMode && !!supabase)
+  const [signingOut, setSigningOut] = useState(false)
+  const [signOutError, setSignOutError] = useState('')
   const [remoteProperties, setRemoteProperties] = useState<Property[]>([])
   const [listingsLoading, setListingsLoading] = useState(!demoMode)
   const [listingsError, setListingsError] = useState('')
   const [listingsRefresh, setListingsRefresh] = useState(0)
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
+  const [photos, setPhotos] = useState<File[]>([])
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [searchText, setSearchText] = useState(initialFilters.query)
   const [saved, setSaved] = useLocalState<string[]>('hogar-cr-favorites', [])
@@ -419,7 +425,7 @@ function App() {
     'hogar-cr-profile',
     null,
   )
-  const [modal, setModal] = useState<ModalName>(null)
+  const [modal, setModalState] = useState<ModalName>(null)
   const [selected, setSelected] = useState<Property | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [view, setView] = useState<'split' | 'list' | 'map'>('split')
@@ -432,6 +438,13 @@ function App() {
   const [photoIndex, setPhotoIndex] = useState(0)
   const [contactSent, setContactSent] = useState(false)
   const [filterError, setFilterError] = useState('')
+  function setModal(next: ModalName) {
+    if (next !== 'publish') {
+      setPhotos([])
+      setPublishError('')
+    }
+    setModalState(next)
+  }
   const allProperties = demoMode ? [...customProperties, ...properties].map(
     (property) => ({
       ...property,
@@ -454,7 +467,7 @@ function App() {
     Number(!!filters.type) +
     Number(!!filters.minPrice || !!filters.maxPrice) +
     Number(filters.beds > 0) +
-    Number(!!filters.amenity)
+    (filters.amenities?.length ?? Number(!!filters.amenity))
 
   useEffect(() => {
     if (demoMode || !supabase) return
@@ -495,6 +508,45 @@ function App() {
     setListingsLoading(true)
     setListingsError('')
     setListingsRefresh((value) => value + 1)
+  }
+
+  useEffect(() => {
+    if (demoMode) return
+    const refreshPhotos = () => setListingsRefresh((value) => value + 1)
+    const timer = window.setInterval(refreshPhotos, 50 * 60 * 1000)
+    window.addEventListener('focus', refreshPhotos)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refreshPhotos)
+    }
+  }, [])
+
+  async function signOut() {
+    if (signingOut) return
+    setSigningOut(true)
+    setSignOutError('')
+    try {
+      let message = demoMode ? 'Perfil local cerrado.' : 'Sesión cerrada.'
+      if (demoMode) setProfile(null)
+      else {
+        const { error } = await requireSupabase().auth.signOut({ scope: 'local' })
+        if (error) {
+          const { data, error: sessionError } = await requireSupabase().auth.getSession()
+          if (sessionError || data.session) throw error
+          message = 'Sesión cerrada en este navegador. No se pudo confirmar la revocación en el servidor.'
+        }
+        setUser(null)
+      }
+      setModal(null)
+      setMobileNav(false)
+      setPublishError('')
+      setToast(message)
+    } catch {
+      setSignOutError('No se pudo cerrar sesión. Revisa tu conexión e intenta de nuevo.')
+      setToast('No se pudo cerrar sesión. Revisa tu conexión e intenta de nuevo.')
+    } finally {
+      setSigningOut(false)
+    }
   }
 
   useEffect(() => {
@@ -575,7 +627,9 @@ function App() {
   }
   async function publishProperty(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (publishing) return
     const data = new FormData(event.currentTarget)
+    photos.forEach((photo) => data.append('photos', photo))
     if (!demoMode) {
       if (!user || publishing) return
       setPublishing(true)
@@ -591,6 +645,16 @@ function App() {
       }
       return
     }
+    setPublishing(true)
+    setPublishError('')
+    try {
+    const images = await Promise.all(photos.map((photo) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(new Error('No se pudo leer la foto.'))
+      reader.readAsDataURL(photo)
+    })))
+    if (data.get('image')) images.push(String(data.get('image')))
     const province = String(data.get('province'))
     const coordinates: Record<string, [number, number]> = {
       'San José': [9.932, -84.084],
@@ -614,12 +678,18 @@ function App() {
       baths: Number(data.get('baths')),
       area: Number(data.get('area')),
       image:
-        String(data.get('image')) ||
+        images[0] ||
         imageUrl('photo-1600596542815-ffad4c1539a9'),
+      images: images.length ? images : undefined,
       coordinates: coordinates[province],
       amenities: data.getAll('amenities').map(String),
       tag: 'NUEVA',
       owner: true,
+    }
+    try {
+      localStorage.setItem('hogar-cr-listings', JSON.stringify([newProperty, ...customProperties]))
+    } catch {
+      throw new Error('No hay espacio en este navegador para estas fotos. Usa fotos más pequeñas en la demo.')
     }
     setCustomProperties((previous) => [newProperty, ...previous])
     setFilters({
@@ -632,6 +702,11 @@ function App() {
     setPromotionProperty(newProperty.id)
     setModal(null)
     setToast('Propiedad publicada en esta demo local.')
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : 'No se pudo guardar el anuncio.')
+    } finally {
+      setPublishing(false)
+    }
   }
   function completePromotion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -650,8 +725,9 @@ function App() {
     ])
     setPromotionComplete(true)
   }
+  const selectedImages = allProperties.find((property) => property.id === selected?.id)?.images ?? selected?.images
   const gallery = selected
-    ? demoMode ? [
+    ? selectedImages?.length ? selectedImages : demoMode ? [
         selected.image,
         imageUrl('photo-1600607687920-4e2a09cf159d'),
         imageUrl('photo-1600210492486-724fe5c67fb0'),
@@ -725,12 +801,19 @@ function App() {
             aria-label="Mi perfil"
             title="Mi perfil"
           >
-            {profile ? (
+            {demoMode && profile ? (
               profile.name.charAt(0).toUpperCase()
             ) : (
               <UserRound size={18} />
             )}
           </button>
+          {(demoMode ? !!profile : !!user) && <button
+            className="icon-button"
+            aria-label="Cerrar sesión"
+            title="Cerrar sesión"
+            disabled={signingOut || publishing}
+            onClick={() => void signOut()}
+          ><LogOut size={18} /></button>}
           <button
             className="button button-primary publish-button"
             onClick={() => setModal('publish')}
@@ -1059,7 +1142,8 @@ function App() {
                 maxPrice: String(data.get('maxPrice')),
                 beds: Number(data.get('beds')),
                 type: String(data.get('type')),
-                amenity: String(data.get('amenity')),
+                amenity: '',
+                amenities: data.getAll('amenities').map(String),
               }))
               setModal(null)
             }}
@@ -1144,22 +1228,17 @@ function App() {
                 ))}
               </select>
             </label>
-            <label>
-              Lo que no puede faltar
-              <select name="amenity" defaultValue={filters.amenity}>
-                <option value="">Todas las comodidades</option>
-                {[
-                  'Piscina',
-                  'Jardín',
-                  'Pet friendly',
-                  'Gimnasio',
-                  'Amueblado',
-                  'Seguridad 24/7',
-                ].map((amenity) => (
-                  <option key={amenity}>{amenity}</option>
+            <fieldset className="amenity-fieldset">
+              <legend className="field-label">Comodidades</legend>
+              <div className="checkbox-grid">
+                {amenityOptions.map((amenity) => (
+                  <label key={amenity}>
+                    <input type="checkbox" name="amenities" value={amenity} defaultChecked={(filters.amenities ?? [filters.amenity]).includes(amenity)} />
+                    {amenity}
+                  </label>
                 ))}
-              </select>
-            </label>
+              </div>
+            </fieldset>
             <div className="dialog-actions">
               <button
                 type="button"
@@ -1222,7 +1301,7 @@ function App() {
       {modal === 'account' && !demoMode && (
         <Dialog title="Mi cuenta" onClose={() => { setModal(null); reloadListings() }}>
           <div className="dialog-content">
-            <Account key={user?.id || 'signed-out'} user={user} loading={authLoading} onPublish={() => { setPublishError(''); setModal('publish') }} onSignOut={() => { setUser(null); setModal(null) }} />
+            <Account key={user?.id || 'signed-out'} user={user} loading={authLoading} signingOut={signingOut} signOutError={signOutError} onPublish={() => { setPublishError(''); setModal('publish') }} onSignOut={signOut} />
           </div>
         </Dialog>
       )}
@@ -1265,12 +1344,10 @@ function App() {
                 </button>
                 <button
                   className="button button-secondary"
-                  onClick={() => {
-                    setProfile(null)
-                    setModal(null)
-                  }}
+                  disabled={signingOut}
+                  onClick={() => void signOut()}
                 >
-                  Cerrar perfil local
+                  <LogOut size={18} /> Cerrar sesión
                 </button>
                 <p className="field-note">
                   Perfil de demostración guardado en este navegador. No es una
@@ -1398,7 +1475,7 @@ function App() {
       {modal === 'publish' && (
         <Dialog
           title="Un nuevo hogar para alguien más"
-          onClose={() => setModal(null)}
+          onClose={() => { if (!publishing) setModal(null) }}
           wide
         >
           {!demoMode && !user ? <div className="dialog-content form-stack">
@@ -1525,12 +1602,13 @@ function App() {
                 />
               </label>
             </div>
+            <ListingPhotoPicker files={photos} disabled={publishing} onChange={setPhotos} />
             <label>
-              {demoMode ? 'URL de la foto (opcional)' : 'URL de la foto de la propiedad'}
+              {photos.length || demoMode ? 'URL de otra foto (opcional)' : 'URL de foto (si no adjuntas archivos)'}
               <input
                 name="image"
                 type="url"
-                required={!demoMode}
+                required={!demoMode && !photos.length}
                 maxLength={2048}
                 placeholder="https://…"
                 pattern="https://.*"
@@ -1542,14 +1620,7 @@ function App() {
             <div>
               <div className="field-label">Comodidades</div>
               <div className="checkbox-grid">
-                {[
-                  'Piscina',
-                  'Jardín',
-                  'Pet friendly',
-                  'Gimnasio',
-                  'Terraza',
-                  'Seguridad 24/7',
-                ].map((amenity) => (
+                {amenityOptions.map((amenity) => (
                   <label key={amenity}>
                     <input type="checkbox" name="amenities" value={amenity} />
                     {amenity}
@@ -1836,7 +1907,7 @@ function App() {
               <ChevronRight size={22} />
             </button>}
             <span className="gallery-count">
-              <Images size={14} /> {photoIndex + 1} / {gallery.length} · {demoMode ? 'Fotos de referencia' : 'Foto de la propiedad'}
+              <Images size={14} /> {photoIndex + 1} / {gallery.length} · {demoMode && !selectedImages?.length ? 'Fotos de referencia' : 'Fotos de la propiedad'}
             </span>
           </div>
           <div className="dialog-content detail-content">

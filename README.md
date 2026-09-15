@@ -29,14 +29,15 @@ This release connects real email-link accounts and shared property listings to S
 ## Features
 
 - Houses and apartments for sale or monthly rental.
-- Accent-insensitive location search, property type, price, bedrooms, amenities, and sorting.
+- Accent-insensitive location search, property type, price, bedrooms, amenities, and sorting. Thirty shared amenities, including Garaje, with multi-select filters that require every selected amenity.
 - USD/CRC display and currency-aware price filters.
 - Seller-selected listing currency: each house or apartment can be priced in USD or CRC and is converted only for the shopper's display currency.
 - Interactive map with price markers, zoom, recentering, and property details.
 - Real property photos and amenities, without fabricated gallery images or descriptions.
 - Favorites and saved searches that persist in the current browser, not the account.
 - Supabase email-link registration, sign-in, session restoration, and sign-out.
-- Authenticated draft creation with all seven provinces, original USD/CRC prices, and a required HTTPS property photo URL.
+- Authenticated draft creation with all seven provinces, original USD/CRC prices, and up to eight JPEG/PNG uploads (5 MB each), previews, removal, and a photo gallery. An external HTTPS photo URL remains supported; at least one photo is required.
+- Sign-out from the header or Mi cuenta, with pending and failure feedback.
 - Owner listing status, review submission, refresh, and deletion.
 - Public inventory limited to published listings; owner drafts remain private under database row-level security.
 - Loading, empty, and retry states; failed requests never fall back to demo inventory.
@@ -46,13 +47,15 @@ This release connects real email-link accounts and shared property listings to S
 
 Payments, paid promotions, and inquiry submission are disabled in production. No payment information or inquiry messages are collected. Saved searches do not send email alerts. Currency conversion remains a clearly labeled reference rate of CRC 510 per USD, not a live rate. Map positions are approximate province centers unless a moderator supplies coordinates.
 
-The public search loads up to the newest 1,000 published listings and filters them in the browser. Add server-side search and pagination before growing beyond that limit. Photos are owner-provided external HTTPS URLs, not uploaded files; review image rights and content before approval. Owners can submit or delete drafts; a full editing workflow is not included.
+The public search loads up to the newest 1,000 published listings and filters them in the browser. Add server-side search and pagination before growing beyond that limit. Uploaded photos use a private Supabase Storage bucket. Owners can access their photos; anonymous visitors can request signed URLs only for published listings. Signed URLs expire after one hour, and the app refreshes them periodically and on window focus. Previously issued URLs remain usable until expiry after sign-out or listing deletion. Review image rights and content before approval. Owners can submit or delete drafts; a full editing workflow is not included.
+
+Client validation checks file size, MIME type, extension, and JPEG/PNG signatures; Storage also enforces MIME type and size limits. This is not malware scanning or full server-side image decoding. Add server-side inspection, metadata stripping, upload quotas, and orphan cleanup before accepting high-volume uploads. Failed submissions attempt cleanup; deleting an owner listing removes its stored photos. Interrupted browser sessions can leave unreferenced uploads. Referenced photos cannot be overwritten or deleted through the client, preserving moderation integrity.
 
 The original sample listings, local profiles, and simulated promotions are available only during `npm run dev` with `VITE_DEMO_MODE=true`. Production builds reject this setting. Existing `hogar-cr-*` browser data is retained but local listings, profiles, and promotions are ignored outside demo mode. Favorites and searches remain browser-local, including after sign-out on shared devices.
 
 ## External Assets
 
-- Property photography: owner-provided HTTPS URLs; demo reference photography uses Unsplash.
+- Property photography: owner uploads in Supabase Storage or owner-provided HTTPS URLs; demo reference photography uses Unsplash. Demo uploads are browser-local and subject to local storage limits.
 - Map data and tiles: OpenStreetMap contributors, with visible attribution. Public tiles require compliance with the [OpenStreetMap tile usage policy](https://operations.osmfoundation.org/policies/tiles/). Use a suitable hosted tile service or self-hosting for production traffic; public tiles offer no SLA.
 - Fonts: DM Sans and Manrope, loaded from Google Fonts.
 
@@ -62,8 +65,8 @@ An internet connection is required for Supabase and these external assets.
 
 Before accepting real listings or money:
 
-1. Apply both database migrations, configure authentication, and assign a moderator. Database policies are implemented, but production project configuration must still be verified.
-2. Store verified property information, image uploads, and precise owner-approved map coordinates.
+1. Apply all three database migrations, configure authentication, and assign a moderator. Database and Storage policies are implemented, but production project configuration must still be verified.
+2. Verify property information, uploaded photos, and precise owner-approved map coordinates.
 3. Integrate a payment provider that supports the operating business in Costa Rica. Create checkout sessions server-side and activate promotions only after verified, idempotent payment webhooks.
 4. Add receipts, refunds, promotion lifecycle jobs, tax validation, and an audit trail. Never trust browser-supplied prices or ownership.
 5. Add secure inquiry delivery, consent, privacy/terms pages, abuse protection, and rate limits.
@@ -82,6 +85,7 @@ Before accepting real listings or money:
 ## Production Deployment
 
 1. Back up the target Supabase database. Apply `supabase/migrations/20260914000000_create_listings.sql` if not already applied, then `supabase/migrations/20260915000000_harden_listing_moderation.sql`, using the Supabase SQL editor or your migration process. Do not rerun the initial migration on an existing schema. The new constraints validate existing rows; review and correct incompatible data instead of bypassing constraints.
+	Apply `supabase/migrations/20260915010000_listing_photos.sql` before releasing the upload UI. It adds `image_paths`, permits uploaded-photo listings without an external URL, and creates the private `listing-photos` bucket with owner-scoped upload/read/delete policies. Existing HTTPS-only listings remain valid. Do not make this bucket public or add broad write policies. Test uploads, publication, signed image access, and deletion with two different accounts and an anonymous browser.
 2. In Supabase Authentication, enable email authentication and new-user registration. Require email confirmation. Configure production SMTP with a verified sender: Supabase's default mail service has delivery restrictions unsuitable for general public registration. Configure appropriate auth rate limits and review CAPTCHA requirements before broad public access.
 3. Set the Auth Site URL and allowed redirect URL to `https://kyassassin17.github.io/Tu-hogar-CR/`. Add the exact local testing URL separately, such as `http://127.0.0.1:5180/`. Keep the email template's standard confirmation link; this app consumes the resulting session automatically. Do not use wildcard production redirects.
 4. Set GitHub repository Actions secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to the same production project's URL and public key. `.env.local` is ignored by Git and is not used by GitHub Actions. Both legacy anon JWTs and current `sb_publishable_*` keys are supported; builds reject missing, placeholder, expired, and privileged keys. Structural validation does not prove a key is valid for a project.

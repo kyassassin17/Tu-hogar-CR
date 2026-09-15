@@ -13,6 +13,7 @@ export type Property = {
   baths: number
   area: number
   image: string
+  images?: string[]
   coordinates: [number, number]
   featured?: boolean
   tag?: string
@@ -21,6 +22,16 @@ export type Property = {
 }
 
 export const exchangeRate = 510
+export const amenityOptions = [
+  'Garaje', 'Parqueo para 2 vehículos', 'Parqueo de visitas', 'Piscina',
+  'Jardín', 'Patio', 'Terraza', 'Balcón', 'Azotea', 'Área de BBQ',
+  'Gimnasio', 'Área de juegos', 'Casa club', 'Cancha deportiva',
+  'Seguridad 24/7', 'Acceso controlado', 'Cámaras de seguridad',
+  'Pet friendly', 'Amueblado', 'Aire acondicionado', 'Agua caliente',
+  'Cocina equipada', 'Cuarto de pilas', 'Bodega', 'Oficina',
+  'Ascensor', 'Acceso para silla de ruedas', 'Paneles solares',
+  'Tanque de agua', 'Fibra óptica',
+]
 export const imageUrl = (photo: string, width = 900) =>
   `https://images.unsplash.com/${photo}?auto=format&fit=crop&w=${width}&q=85`
 
@@ -235,6 +246,7 @@ export type Filters = {
   maxPrice: string
   beds: number
   amenity: string
+  amenities?: string[]
   currency: Currency
   sort: string
 }
@@ -276,7 +288,8 @@ export function filterProperties(listings: Property[], filters: Filters) {
         (!filters.minPrice || price >= Number(filters.minPrice)) &&
         (!filters.maxPrice || price <= Number(filters.maxPrice)) &&
         property.beds >= filters.beds &&
-        (!filters.amenity || property.amenities.includes(filters.amenity))
+        (!filters.amenity || property.amenities.includes(filters.amenity)) &&
+        (filters.amenities ?? []).every((amenity) => property.amenities.includes(amenity))
       )
     })
     .sort((first, second) =>

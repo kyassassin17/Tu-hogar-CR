@@ -12,11 +12,13 @@ const statusLabels = {
   archived: 'Archivado',
 }
 
-export default function Account({ user, loading, onPublish, onSignOut }: {
+export default function Account({ user, loading, signingOut, signOutError, onPublish, onSignOut }: {
   user: User | null
   loading: boolean
+  signingOut: boolean
+  signOutError: string
   onPublish: () => void
-  onSignOut: () => void
+  onSignOut: () => Promise<void>
 }) {
   const [listings, setListings] = useState<ListingRow[]>([])
   const [busy, setBusy] = useState(false)
@@ -82,8 +84,8 @@ export default function Account({ user, loading, onPublish, onSignOut }: {
       await action()
       setMessage(success)
       reloadListings()
-    } catch {
-      setError('No se pudo completar la operación. Revisa tu conexión e intenta de nuevo.')
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'No se pudo completar la operación. Revisa tu conexión e intenta de nuevo.')
     } finally {
       setBusy(false)
     }
@@ -95,6 +97,7 @@ export default function Account({ user, loading, onPublish, onSignOut }: {
   return (
     <div className="form-stack">
       {error && <p role="alert" className="field-note">{error}</p>}
+      {signOutError && <p role="alert" className="field-note">{signOutError}</p>}
       {message && <p role="status" className="field-note">{message}</p>}
       {user ? <>
         <p className="account-email">{user.email}</p>
@@ -116,11 +119,7 @@ export default function Account({ user, loading, onPublish, onSignOut }: {
             </li>)}
           </ul>
         ) : <p>Aún no tienes anuncios.</p>}
-        <button className="button button-secondary" disabled={busy} onClick={() => void act(async () => {
-          const { error: authError } = await requireSupabase().auth.signOut({ scope: 'local' })
-          if (authError) throw authError
-          onSignOut()
-        }, '')}><LogOut size={18} /> Cerrar sesión</button>
+        <button className="button button-secondary" disabled={busy || signingOut} onClick={() => void onSignOut()}><LogOut size={18} /> {signingOut ? 'Cerrando sesión...' : 'Cerrar sesión'}</button>
       </> : <form className="form-stack" onSubmit={signIn}>
         <label>Correo electrónico<input name="email" type="email" autoComplete="email" required maxLength={254} placeholder="vos@ejemplo.com" /></label>
         <button className="button button-primary" disabled={busy || emailSent}><Mail size={18} /> {busy ? 'Enviando...' : emailSent ? 'Enlace enviado' : 'Recibir enlace de acceso'}<ArrowRight size={17} /></button>
