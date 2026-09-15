@@ -43,6 +43,10 @@ import {
 } from 'lucide-react'
 import { MapContainer, Marker, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
+import type { User } from '@supabase/supabase-js'
+import Account from './Account'
+import { demoMode, supabase } from './lib/supabase'
+import { createListing, fetchPublishedListings } from './lib/listings'
 import 'leaflet/dist/leaflet.css'
 import {
   exchangeRate,
@@ -299,7 +303,7 @@ function PropertyCard({
             )}
           </div>
           <span className="image-count">
-            <Images size={13} /> 3
+            <Images size={13} /> {demoMode ? 3 : 1}
           </span>
           <span className="image-location">
             <MapPin size={13} />
@@ -388,6 +392,14 @@ const plans = [
 ]
 
 function App() {
+  const [user, setUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(!demoMode && !!supabase)
+  const [remoteProperties, setRemoteProperties] = useState<Property[]>([])
+  const [listingsLoading, setListingsLoading] = useState(!demoMode)
+  const [listingsError, setListingsError] = useState('')
+  const [listingsRefresh, setListingsRefresh] = useState(0)
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState('')
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [searchText, setSearchText] = useState(initialFilters.query)
   const [saved, setSaved] = useLocalState<string[]>('hogar-cr-favorites', [])
@@ -420,7 +432,7 @@ function App() {
   const [photoIndex, setPhotoIndex] = useState(0)
   const [contactSent, setContactSent] = useState(false)
   const [filterError, setFilterError] = useState('')
-  const allProperties = [...customProperties, ...properties].map(
+  const allProperties = demoMode ? [...customProperties, ...properties].map(
     (property) => ({
       ...property,
       featured:
@@ -431,7 +443,7 @@ function App() {
             Date.parse(promotion.expires) > Date.now(),
         ),
     }),
-  )
+  ) : remoteProperties
   const listings = filterProperties(allProperties, filters)
   const favorites = allProperties.filter((property) =>
     saved.includes(property.id),
@@ -443,6 +455,47 @@ function App() {
     Number(!!filters.minPrice || !!filters.maxPrice) +
     Number(filters.beds > 0) +
     Number(!!filters.amenity)
+
+  useEffect(() => {
+    if (demoMode || !supabase) return
+    let active = true
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return
+      setUser(session?.user ?? null)
+      setAuthLoading(false)
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        setListingsLoading(true)
+        setListingsError('')
+        setListingsRefresh((value) => value + 1)
+      }
+    })
+    supabase.auth.getSession().catch(() => {
+      if (active) {
+        setAuthLoading(false)
+        setToast('No se pudo restaurar tu sesión. Inicia sesión de nuevo.')
+      }
+    })
+    return () => { active = false; subscription.unsubscribe() }
+  }, [])
+
+  useEffect(() => {
+    if (demoMode) return
+    let active = true
+    fetchPublishedListings().then((rows) => {
+      if (active) setRemoteProperties(rows)
+    }).catch(() => {
+      if (active) setListingsError('No se pudieron cargar las propiedades. Intenta de nuevo.')
+    }).finally(() => {
+      if (active) setListingsLoading(false)
+    })
+    return () => { active = false }
+  }, [listingsRefresh, user?.id])
+
+  function reloadListings() {
+    setListingsLoading(true)
+    setListingsError('')
+    setListingsRefresh((value) => value + 1)
+  }
 
   useEffect(() => {
     if (!toast) return
@@ -487,6 +540,10 @@ function App() {
     setContactSent(false)
   }
   function openPromote() {
+    if (!demoMode) {
+      setToast('Las promociones pagadas no están disponibles.')
+      return
+    }
     setModal('promote')
     setCheckout(false)
     setPromotionComplete(false)
@@ -516,9 +573,24 @@ function App() {
     ])
     setToast('Búsqueda guardada. Encuéntrala en tu perfil.')
   }
-  function publishProperty(event: FormEvent<HTMLFormElement>) {
+  async function publishProperty(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
+    if (!demoMode) {
+      if (!user || publishing) return
+      setPublishing(true)
+      setPublishError('')
+      try {
+        await createListing(data, user.id)
+        setModal('account')
+        setToast('Borrador guardado. Envíalo a revisión desde Mis anuncios.')
+      } catch (error) {
+        setPublishError(error instanceof Error ? error.message : 'No se pudo guardar el anuncio. Intenta de nuevo.')
+      } finally {
+        setPublishing(false)
+      }
+      return
+    }
     const province = String(data.get('province'))
     const coordinates: Record<string, [number, number]> = {
       'San José': [9.932, -84.084],
@@ -563,6 +635,7 @@ function App() {
   }
   function completePromotion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!demoMode) return
     setPromotions((previous) => [
       ...previous.filter(
         (promotion) => promotion.propertyId !== promotionProperty,
@@ -578,18 +651,18 @@ function App() {
     setPromotionComplete(true)
   }
   const gallery = selected
-    ? [
+    ? demoMode ? [
         selected.image,
         imageUrl('photo-1600607687920-4e2a09cf159d'),
         imageUrl('photo-1600210492486-724fe5c67fb0'),
-      ]
+      ] : [selected.image]
     : []
 
   return (
     <>
       <header className="site-header">
         <a
-          href="/"
+          href={import.meta.env.BASE_URL}
           className="brand"
           aria-label="Encuentra tu Hogar-CR, inicio"
         >
@@ -628,9 +701,9 @@ function App() {
           >
             Vender
           </button>
-          <button className="promote-nav" onClick={openPromote}>
+          {demoMode && <button className="promote-nav" onClick={openPromote}>
             <Sparkles size={15} /> Promocionar
-          </button>
+          </button>}
         </nav>
         <div className="header-actions">
           <button
@@ -883,6 +956,11 @@ function App() {
                 </div>
               </div>
             </div>
+            {listingsLoading && !demoMode && <p role="status">Cargando propiedades...</p>}
+            {listingsError && <div role="alert" className="empty-state">
+              <p>{listingsError}</p>
+              <button className="button button-secondary" onClick={reloadListings}>Reintentar</button>
+            </div>}
             <div className="property-grid">
               {listings.map((property) => (
                 <PropertyCard
@@ -896,7 +974,7 @@ function App() {
                 />
               ))}
             </div>
-            {!listings.length && (
+            {!listings.length && (demoMode || (!listingsLoading && !listingsError)) && (
               <div className="empty-state">
                 <Search size={36} />
                 <h3>Tu hogar puede estar un poco más allá</h3>
@@ -909,7 +987,7 @@ function App() {
                 </button>
               </div>
             )}
-            <div className="owner-banner">
+            {demoMode && <div className="owner-banner">
               <div className="owner-banner-icon">
                 <House size={24} />
                 <Sparkles size={14} />
@@ -921,16 +999,16 @@ function App() {
               <button onClick={openPromote}>
                 Destacar propiedad <ArrowRight size={17} />
               </button>
-            </div>
+            </div>}
             <div className="results-bottom">
               <ShieldCheck size={14} />
               <span>Un nuevo comienzo, con toda la información.</span>
-              <span className="demo-label">Propiedades de demostración</span>
+              <span className="demo-label">{demoMode ? 'Propiedades de demostración' : 'Conversión de referencia: ₡510/USD'}</span>
             </div>
             <footer className="site-footer">
               <span>© {new Date().getFullYear()} Encuentra tu Hogar-CR</span>
               <button onClick={() => setModal('account')}>Mi cuenta</button>
-              <button onClick={openPromote}>Para propietarios</button>
+              <button onClick={() => setModal('account')}>Para propietarios</button>
               <span className="footer-pura-vida">
                 Pura vida. Puro hogar. <Leaf size={12} />
               </span>
@@ -1141,7 +1219,15 @@ function App() {
         </Dialog>
       )}
 
-      {modal === 'account' && (
+      {modal === 'account' && !demoMode && (
+        <Dialog title="Mi cuenta" onClose={() => { setModal(null); reloadListings() }}>
+          <div className="dialog-content">
+            <Account key={user?.id || 'signed-out'} user={user} loading={authLoading} onPublish={() => { setPublishError(''); setModal('publish') }} onSignOut={() => { setUser(null); setModal(null) }} />
+          </div>
+        </Dialog>
+      )}
+
+      {modal === 'account' && demoMode && (
         <Dialog
           title={profile ? `Hola, ${profile.name}` : 'Tu hogar empieza contigo'}
           onClose={() => setModal(null)}
@@ -1303,7 +1389,7 @@ function App() {
             )}
             <p className="field-note">
               Guardadas en este navegador. Las alertas por correo no están
-              habilitadas en esta demo.
+              habilitadas.
             </p>
           </div>
         </Dialog>
@@ -1315,7 +1401,10 @@ function App() {
           onClose={() => setModal(null)}
           wide
         >
-          <form
+          {!demoMode && !user ? <div className="dialog-content form-stack">
+            <p>{authLoading ? 'Cargando tu sesión...' : 'Inicia sesión para publicar una propiedad.'}</p>
+            <button className="button button-primary" disabled={authLoading} onClick={() => setModal('account')}><UserRound size={18} /> Iniciar sesión</button>
+          </div> : <form
             className="dialog-content form-stack"
             onSubmit={publishProperty}
           >
@@ -1325,8 +1414,7 @@ function App() {
             <div className="demo-notice">
               <House size={19} />
               <p>
-                Publicación de demostración: tu anuncio será visible solo en
-                este navegador. Usa información de ejemplo.
+                {demoMode ? 'Publicación de demostración: tu anuncio será visible solo en este navegador. Usa información de ejemplo.' : 'Los anuncios requieren revisión antes de aparecer públicamente.'}
               </p>
             </div>
             <label>
@@ -1334,6 +1422,7 @@ function App() {
               <input
                 name="title"
                 required
+                minLength={5}
                 maxLength={100}
                 placeholder="Ej. Casa con jardín en Santa Ana"
               />
@@ -1437,16 +1526,17 @@ function App() {
               </label>
             </div>
             <label>
-              URL de la foto (opcional)
+              {demoMode ? 'URL de la foto (opcional)' : 'URL de la foto de la propiedad'}
               <input
                 name="image"
                 type="url"
+                required={!demoMode}
+                maxLength={2048}
                 placeholder="https://…"
                 pattern="https://.*"
               />
               <span className="field-note">
-                Usa una imagen HTTPS. Sin foto, se mostrará una imagen de
-                referencia.
+                {demoMode ? 'Usa una imagen HTTPS. Sin foto, se mostrará una imagen de referencia.' : 'Foto real de la propiedad, con permiso de publicación. Solo HTTPS.'}
               </span>
             </label>
             <div>
@@ -1473,15 +1563,16 @@ function App() {
             </p>
             <div className="dialog-actions">
               <span className="field-note">Publicación gratuita</span>
-              <button className="button button-primary">
-                <Plus size={18} /> Publicar en la demo
+              <button className="button button-primary" disabled={publishing}>
+                <Plus size={18} /> {publishing ? 'Guardando...' : demoMode ? 'Publicar en la demo' : 'Guardar borrador'}
               </button>
             </div>
-          </form>
+            {publishError && <p role="alert">{publishError}</p>}
+          </form>}
         </Dialog>
       )}
 
-      {modal === 'promote' && (
+      {modal === 'promote' && demoMode && (
         <Dialog
           title={
             promotionComplete
@@ -1722,9 +1813,9 @@ function App() {
           <div className="detail-gallery">
             <img
               src={gallery[photoIndex]}
-              alt={`${selected.title}, foto de referencia ${photoIndex + 1}`}
+              alt={`${selected.title}, foto ${photoIndex + 1}`}
             />
-            <button
+            {gallery.length > 1 && <button
               className="gallery-prev icon-button"
               onClick={() =>
                 setPhotoIndex(
@@ -1735,18 +1826,17 @@ function App() {
               title="Foto anterior"
             >
               <ChevronLeft size={22} />
-            </button>
-            <button
+            </button>}
+            {gallery.length > 1 && <button
               className="gallery-next icon-button"
               onClick={() => setPhotoIndex((photoIndex + 1) % gallery.length)}
               aria-label="Siguiente foto"
               title="Siguiente foto"
             >
               <ChevronRight size={22} />
-            </button>
+            </button>}
             <span className="gallery-count">
-              <Images size={14} /> {photoIndex + 1} / {gallery.length} · Fotos
-              de referencia
+              <Images size={14} /> {photoIndex + 1} / {gallery.length} · {demoMode ? 'Fotos de referencia' : 'Foto de la propiedad'}
             </span>
           </div>
           <div className="dialog-content detail-content">
@@ -1799,14 +1889,14 @@ function App() {
                   <strong>{selected.area} m²</strong> de construcción
                 </span>
               </div>
-              <h3>Un espacio para vivir a tu manera</h3>
+              {demoMode && <><h3>Un espacio para vivir a tu manera</h3>
               <p className="detail-description">
                 Descubre esta {selected.type.toLowerCase()} en{' '}
                 {selected.location.split(',')[0]}, con espacios amplios y luz
                 natural. Sus {selected.area} m² ofrecen el espacio para
                 disfrutar de cada día, cerca de los servicios y de todo lo que
                 importa.
-              </p>
+              </p></>}
               <h3>Lo que hace especial este hogar</h3>
               <div className="amenities-list">
                 {selected.amenities.map((amenity) => (
@@ -1817,12 +1907,12 @@ function App() {
                 ))}
               </div>
               <p className="field-note">
-                Anuncio y fotografías de demostración. Ubicación aproximada.{' '}
-                {filters.currency === 'CRC' &&
+                {demoMode ? 'Anuncio y fotografías de demostración. Ubicación aproximada. ' : 'Información proporcionada por el anunciante. Ubicación aproximada. '}
+                {filters.currency !== (selected.currency || 'USD') &&
                   'Tipo de cambio de referencia: ₡510 por dólar.'}
               </p>
             </div>
-            <aside className="contact-panel">
+            {demoMode ? <aside className="contact-panel">
               <div className="agent-heading">
                 <span className="agent-avatar">
                   <UserRound size={22} />
@@ -1893,7 +1983,7 @@ function App() {
                   </p>
                 </form>
               )}
-            </aside>
+            </aside> : <aside className="contact-panel"><h3>Contacto</h3><p>Las consultas a propietarios aún no están disponibles.</p></aside>}
           </div>
         </Dialog>
       )}
