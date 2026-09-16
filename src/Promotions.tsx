@@ -1,33 +1,24 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { User } from '@supabase/supabase-js'
 import {
-  BadgeCheck,
   Check,
-  Clock,
   Copy,
   Smartphone,
   Sparkles,
-  Star,
   UserRound,
-  X,
-  Zap,
 } from 'lucide-react'
 import { fetchOwnedListings, type ListingRow } from './lib/listings'
 import {
   createPromotionRequest,
   fetchOwnerPromotions,
-  fetchPendingPromotions,
-  isAdmin as checkAdmin,
+  fetchPromotionPlans,
   promotionActive,
-  promotionPlans,
   promotionTotal,
-  reviewPromotion,
-  type PromotionPlanId,
+  type PromotionPlanRow,
   type PromotionRow,
   sinpeAccount,
 } from './lib/promotions'
 
-const planIcons = { essential: Zap, plus: Sparkles, premium: Star }
 const statusLabels = {
   pending: 'Pago en verificación',
   active: 'Promoción activa',
@@ -44,34 +35,31 @@ export default function Promotions({ user, loading, onSignIn }: {
 }) {
   const [listings, setListings] = useState<ListingRow[]>([])
   const [promotions, setPromotions] = useState<PromotionRow[]>([])
-  const [queue, setQueue] = useState<PromotionRow[]>([])
-  const [admin, setAdmin] = useState(false)
+  const [plans, setPlans] = useState<PromotionPlanRow[]>([])
   const [loadingData, setLoadingData] = useState(!!user)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [planId, setPlanId] = useState<PromotionPlanId>('plus')
+  const [chosenPlan, setChosenPlan] = useState('')
   const [chosenListing, setChosenListing] = useState('')
-  const [notes, setNotes] = useState<Record<string, string>>({})
   const [refresh, setRefresh] = useState(0)
   const account = sinpeAccount()
-  const plan = promotionPlans.find((option) => option.id === planId)!
-  const total = promotionTotal(plan)
+  const plan = plans.find((option) => option.id === chosenPlan) ?? plans[0]
+  const total = plan ? promotionTotal(plan) : 0
   const listingId = listings.some((listing) => listing.id === chosenListing)
     ? chosenListing
     : listings[0]?.id ?? ''
 
   const load = useCallback(async (owner: string) => {
-    const [owned, requests, isAdministrator] = await Promise.all([
+    const [owned, requests, planRows] = await Promise.all([
       fetchOwnedListings(owner),
       fetchOwnerPromotions(owner),
-      checkAdmin(),
+      fetchPromotionPlans(),
     ])
     return {
       listings: owned.filter((listing) => listing.status === 'published'),
       promotions: requests,
-      admin: isAdministrator,
-      queue: isAdministrator ? await fetchPendingPromotions() : [],
+      plans: planRows,
     }
   }, [])
 
@@ -82,8 +70,7 @@ export default function Promotions({ user, loading, onSignIn }: {
       if (!active) return
       setListings(state.listings)
       setPromotions(state.promotions)
-      setAdmin(state.admin)
-      setQueue(state.queue)
+      setPlans(state.plans)
     }).catch(() => {
       if (active) setError('No se pudieron cargar tus promociones. Intenta de nuevo.')
     }).finally(() => {
@@ -104,30 +91,11 @@ export default function Promotions({ user, loading, onSignIn }: {
     setError('')
     setMessage('')
     try {
-      await createPromotionRequest(new FormData(event.currentTarget), user.id)
+      await createPromotionRequest(new FormData(event.currentTarget), user.id, plans)
       setMessage('Registramos tu pago. Verificaremos el SINPE Móvil y activaremos la promoción.')
       setRefresh((value) => value + 1)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'No se pudo registrar el pago.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function review(promotion: PromotionRow, status: 'active' | 'rejected') {
-    if (busy || !user) return
-    setBusy(true)
-    setError('')
-    setMessage('')
-    try {
-      await reviewPromotion(promotion.id, status, notes[promotion.id] ?? '')
-      setMessage(status === 'active'
-        ? 'Pago verificado. La promoción quedó activa.'
-        : 'Solicitud rechazada. El vendedor verá tu nota.')
-      setNotes((previous) => ({ ...previous, [promotion.id]: '' }))
-      setRefresh((value) => value + 1)
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'No se pudo revisar el pago.')
     } finally {
       setBusy(false)
     }
@@ -153,7 +121,9 @@ export default function Promotions({ user, loading, onSignIn }: {
 
       {!loadingData && !listings.length ? (
         <p>Publica un anuncio para poder destacarlo en las búsquedas.</p>
-      ) : (
+      ) : !loadingData && !plan ? (
+        <p>No hay planes de promoción disponibles en este momento.</p>
+      ) : plan ? (
         <form className="form-stack" onSubmit={submitRequest}>
           <label className="promotion-property-select">
             ¿Qué propiedad quieres destacar?
@@ -165,44 +135,40 @@ export default function Promotions({ user, loading, onSignIn }: {
               ))}
             </select>
           </label>
-          <input type="hidden" name="plan" value={planId} />
+          <input type="hidden" name="plan" value={plan.id} />
           <div className="promotion-plans">
-            {promotionPlans.map((option) => {
-              const Icon = planIcons[option.id]
-              return (
-                <button
-                  type="button"
-                  key={option.id}
-                  className={`plan-card ${option.id === planId ? 'plan-selected' : ''}`}
-                  onClick={() => setPlanId(option.id)}
-                  aria-pressed={option.id === planId}
-                >
-                  {option.id === 'plus' && <span className="popular-plan">EL FAVORITO</span>}
-                  <div className="plan-top">
-                    <Icon size={23} />
-                    <span className="plan-radio">{option.id === planId && <Check size={12} />}</span>
-                  </div>
-                  <h3>{option.name}</h3>
-                  <p className="plan-description">{option.description}</p>
-                  <div className="plan-price">
-                    {colones(option.price)}
-                    <small> / {option.days} días</small>
-                  </div>
-                  <p className="plan-tax">+ IVA · Pago único</p>
-                  <ul>
-                    {option.features.map((feature) => (
-                      <li key={feature}><Check size={15} />{feature}</li>
-                    ))}
-                  </ul>
-                </button>
-              )
-            })}
+            {plans.map((option) => (
+              <button
+                type="button"
+                key={option.id}
+                className={`plan-card ${option.id === plan.id ? 'plan-selected' : ''}`}
+                onClick={() => setChosenPlan(option.id)}
+                aria-pressed={option.id === plan.id}
+              >
+                <div className="plan-top">
+                  <Sparkles size={23} />
+                  <span className="plan-radio">{option.id === plan.id && <Check size={12} />}</span>
+                </div>
+                <h3>{option.name}</h3>
+                <p className="plan-description">{option.description}</p>
+                <div className="plan-price">
+                  {colones(option.price_crc)}
+                  <small> / {option.days} días</small>
+                </div>
+                <p className="plan-tax">+ IVA · Pago único</p>
+                <ul>
+                  {option.features.map((feature) => (
+                    <li key={feature}><Check size={15} />{feature}</li>
+                  ))}
+                </ul>
+              </button>
+            ))}
           </div>
 
           <div className="order-summary">
-            <div><span>Plan {plan.name}</span><strong>{colones(plan.price)}</strong></div>
+            <div><span>Plan {plan.name}</span><strong>{colones(plan.price_crc)}</strong></div>
             <div><span>Duración</span><span>{plan.days} días</span></div>
-            <div><span>IVA (13%)</span><span>{colones(total - plan.price)}</span></div>
+            <div><span>IVA (13%)</span><span>{colones(total - plan.price_crc)}</span></div>
             <div className="order-total"><strong>Total a transferir</strong><strong>{colones(total)}</strong></div>
           </div>
 
@@ -250,7 +216,7 @@ export default function Promotions({ user, loading, onSignIn }: {
           </div>
           {pendingListing && <p className="field-note">Ese anuncio ya tiene un pago en verificación.</p>}
         </form>
-      )}
+      ) : null}
 
       {promotions.length > 0 && (
         <section className="form-stack">
@@ -276,44 +242,6 @@ export default function Promotions({ user, loading, onSignIn }: {
               </li>
             ))}
           </ul>
-        </section>
-      )}
-
-      {admin && (
-        <section className="form-stack admin-queue">
-          <h3><BadgeCheck size={19} /> Pagos por verificar ({queue.length})</h3>
-          {queue.length ? queue.map((promotion) => (
-            <div className="admin-payment" key={promotion.id}>
-              <div>
-                <strong>{promotion.listings?.title ?? promotion.listing_id}</strong>
-                <p className="field-note">
-                  {colones(promotion.amount_crc)} · plan {promotion.plan} · {promotion.days} días ·{' '}
-                  desde {promotion.sinpe_phone} · comprobante <strong>{promotion.sinpe_reference}</strong>
-                </p>
-                <p className="field-note">
-                  <Clock size={13} /> Solicitado el {promotionDate(promotion.created_at)} ·
-                  Detalle esperado: HOGARCR-{promotion.listing_id.slice(0, 8).toUpperCase()}
-                </p>
-              </div>
-              <label>
-                Nota de la revisión
-                <input
-                  value={notes[promotion.id] ?? ''}
-                  maxLength={300}
-                  placeholder="Obligatoria si rechazas el pago"
-                  onChange={(event) => setNotes((previous) => ({ ...previous, [promotion.id]: event.target.value }))}
-                />
-              </label>
-              <div className="dialog-actions">
-                <button className="button button-secondary" disabled={busy} onClick={() => void review(promotion, 'rejected')}>
-                  <X size={17} /> Rechazar
-                </button>
-                <button className="button button-primary" disabled={busy} onClick={() => void review(promotion, 'active')}>
-                  <Check size={17} /> Pago recibido, activar
-                </button>
-              </div>
-            </div>
-          )) : <p className="field-note">No hay pagos pendientes de verificación.</p>}
         </section>
       )}
     </div>

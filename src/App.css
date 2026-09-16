@@ -1755,6 +1755,60 @@ input[type='radio'] {
   align-items: center;
   gap: 8px;
 }
+.admin-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.admin-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid #e2e7dd;
+  padding-bottom: 10px;
+}
+.admin-tabs button[role='tab'] {
+  border: 1px solid #e2e7dd;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5d6b57;
+  background: #fff;
+}
+.admin-tabs button[role='tab'].selected {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+.admin-tabs .icon-button {
+  margin-left: auto;
+}
+.admin-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.admin-search label {
+  flex: 1 1 220px;
+}
+.admin-plan-form {
+  border: 1px solid #e2e7dd;
+  border-radius: 6px;
+  padding: 16px;
+  background: #f9fbf7;
+}
+.admin-plan-form textarea {
+  font: inherit;
+  width: 100%;
+  border: 1px solid #d8e0d3;
+  border-radius: 5px;
+  padding: 9px 11px;
+  resize: vertical;
+}
 .admin-payment {
   border: 1px solid #e2e7dd;
   border-radius: 6px;

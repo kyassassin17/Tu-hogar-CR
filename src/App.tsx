@@ -48,11 +48,12 @@ import { MapContainer, Marker, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { User } from '@supabase/supabase-js'
 import Account from './Account'
+import Admin from './Admin'
 import Promotions from './Promotions'
 import ListingPhotoPicker from './ListingPhotoPicker'
 import { demoMode, requireSupabase, supabase } from './lib/supabase'
 import { createListing, fetchPublishedListings } from './lib/listings'
-import { promotionPlans } from './lib/promotions'
+import { defaultPromotionPlans, isAdmin as checkAdmin } from './lib/promotions'
 import { cantonsOf, locationCoordinates, provinces as costaRicaProvinces } from './lib/costaRica'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -71,7 +72,7 @@ import {
 import './App.css'
 
 type ModalName =
-  'filters' | 'saved' | 'publish' | 'promote' | 'account' | 'searches' | null
+  'filters' | 'saved' | 'publish' | 'promote' | 'account' | 'searches' | 'admin' | null
 type Promotion = { propertyId: string; plan: string; expires: string }
 type SavedSearch = { id: string; filters: Filters }
 type Profile = { name: string; email: string }
@@ -358,10 +359,15 @@ function PropertyCard({
 }
 
 const planIcons = { essential: Zap, plus: Sparkles, premium: Star }
-const plans = promotionPlans.map((plan) => ({ ...plan, icon: planIcons[plan.id] }))
+const plans = defaultPromotionPlans.map((plan) => ({
+  ...plan,
+  price: plan.price_crc,
+  icon: planIcons[plan.id as keyof typeof planIcons] ?? Sparkles,
+}))
 
 function App() {
   const [user, setUser] = useState<User | null>(null)
+  const [admin, setAdmin] = useState(false)
   const [authLoading, setAuthLoading] = useState(!demoMode && !!supabase)
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState('')
@@ -444,6 +450,7 @@ function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return
       setUser(session?.user ?? null)
+      setAdmin(false)
       setAuthLoading(false)
       if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
         setListingsLoading(true)
@@ -472,6 +479,15 @@ function App() {
     })
     return () => { active = false }
   }, [listingsRefresh, user?.id])
+
+  useEffect(() => {
+    if (demoMode || !user) return
+    let active = true
+    checkAdmin().then((isAdministrator) => {
+      if (active) setAdmin(isAdministrator)
+    })
+    return () => { active = false }
+  }, [user])
 
   function reloadListings() {
     setListingsLoading(true)
@@ -505,6 +521,7 @@ function App() {
           message = 'Sesión cerrada en este navegador. No se pudo confirmar la revocación en el servidor.'
         }
         setUser(null)
+        setAdmin(false)
       }
       setModal(null)
       setMobileNav(false)
@@ -746,6 +763,16 @@ function App() {
           <button className="promote-nav" onClick={openPromote}>
             <Sparkles size={15} /> Promocionar
           </button>
+          {admin && (
+            <button
+              onClick={() => {
+                setModal('admin')
+                setMobileNav(false)
+              }}
+            >
+              <ShieldCheck size={15} /> Panel
+            </button>
+          )}
         </nav>
         <div className="header-actions">
           <button
@@ -1651,6 +1678,18 @@ function App() {
             </div>
             {publishError && <p role="alert">{publishError}</p>}
           </form>}
+        </Dialog>
+      )}
+
+      {modal === 'admin' && admin && user && (
+        <Dialog
+          title="Panel de administración"
+          onClose={() => { setModal(null); reloadListings() }}
+          wide
+        >
+          <div className="dialog-content">
+            <Admin key={user.id} user={user} />
+          </div>
         </Dialog>
       )}
 

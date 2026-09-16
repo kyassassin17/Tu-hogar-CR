@@ -44,6 +44,7 @@ This release connects real email-link accounts and shared property listings to S
 - Owner listing status, refresh, and deletion. Listings publish immediately without administrator approval.
 - Public inventory limited to published listings; archived listings remain private under database row-level security.
 - Paid promotions through SINPE Móvil: sellers pick a plan, transfer the exact amount to the published SINPE Móvil number, and register the payment receipt. An administrator verifies the transfer in the bank and activates or rejects it from the app. Only a verified payment can set a listing's promoted window.
+- Administrator panel for a single configured account: verify SINPE Móvil payments, create/edit/retire promotion plans and prices, and archive, republish, or delete any listing that breaks the terms.
 - Loading, empty, and retry states; failed requests never fall back to demo inventory.
 - Responsive desktop, tablet, and phone layouts, keyboard-accessible dialogs, and reduced-motion support.
 
@@ -71,9 +72,9 @@ An internet connection is required for Supabase and these external assets.
 
 Before accepting real listings or money:
 
-1. Apply all five database migrations and configure authentication. Database and Storage policies are implemented, but production project configuration must still be verified.
+1. Apply all six database migrations and configure authentication. Database and Storage policies are implemented, but production project configuration must still be verified.
 2. Publish privacy and terms pages covering publicly visible seller contact details, and set up abuse reporting and takedown handling.
-3. Register the business SINPE Móvil number in `VITE_SINPE_PHONE` and `VITE_SINPE_NAME`, add at least one administrator to `public.admins`, and agree on who checks the bank account and how quickly payments are verified.
+3. Register the business SINPE Móvil number in `VITE_SINPE_PHONE` and `VITE_SINPE_NAME`, confirm `public.admin_emails` holds the right administrator address, and agree on who checks the bank account and how quickly payments are verified.
 4. Add receipts, refunds, promotion lifecycle jobs, tax validation, and an audit trail. Never trust browser-supplied prices or ownership.
 5. Add secure inquiry delivery, consent, privacy/terms pages, abuse protection, and rate limits.
 6. Replace the sample exchange rate with an approved source and timestamp, and arrange production map hosting.
@@ -83,8 +84,10 @@ Before accepting real listings or money:
 
 - `src/App.tsx`: marketplace views, public inventory loading, and listing publication.
 - `src/Account.tsx`: email-link authentication and owner listing management.
-- `src/Promotions.tsx`: SINPE Móvil promotion purchase and the administrator payment verification queue.
+- `src/Promotions.tsx`: SINPE Móvil promotion purchase for sellers.
+- `src/Admin.tsx`: administrator panel for payments, promotion plans, and listing moderation.
 - `src/lib/promotions.ts`: promotion plans, payment validation, and promotion requests.
+- `src/lib/admin.ts`: plan editing and listing moderation calls.
 - `src/lib/listings.ts`: Supabase listing operations, validation, and database-to-UI mapping.
 - `src/lib/costaRica.ts`: provinces, cantons, and approximate map coordinates.
 - `src/App.css` and `src/index.css`: responsive design and shared styles.
@@ -96,14 +99,12 @@ Before accepting real listings or money:
 1. Back up the target Supabase database. Apply `supabase/migrations/20260914000000_create_listings.sql` if not already applied, then `supabase/migrations/20260915000000_harden_listing_moderation.sql`, using the Supabase SQL editor or your migration process. Do not rerun the initial migration on an existing schema. The new constraints validate existing rows; review and correct incompatible data instead of bypassing constraints.
 	Apply `supabase/migrations/20260915010000_listing_photos.sql` before releasing the upload UI. It adds `image_paths`, permits uploaded-photo listings without an external URL, and creates the private `listing-photos` bucket with owner-scoped upload/read/delete policies. Existing HTTPS-only listings remain valid. Do not make this bucket public or add broad write policies. Test uploads, publication, signed image access, and deletion with two different accounts and an anonymous browser.
 	Apply `supabase/migrations/20260916000000_self_publishing.sql` next. It adds `district` and the required `contact_name`, `contact_phone`, and `contact_email` columns, limits `status` to `published` and `archived`, lets owners publish their own listings, and requires contact details plus coordinates on published rows. Listings created before this migration have no contact details and are archived; their owners must republish them with complete information.
-	Apply `supabase/migrations/20260917000000_listing_promotions.sql` last. It adds the `listing_promotions` payment records, the `admins` table, the `promoted_until` column, and the policies that let only an administrator turn a verified SINPE Móvil payment into a promotion. Sellers can request and cancel their own pending payments and can never write `promoted_until` themselves.
-2. Register the administrators who verify SINPE Móvil payments, using the Supabase SQL editor after those accounts have signed in at least once:
+	Apply `supabase/migrations/20260917000000_listing_promotions.sql` next. It adds the `listing_promotions` payment records, the `admins` table, the `promoted_until` column, and the policies that let only an administrator turn a verified SINPE Móvil payment into a promotion. Sellers can request and cancel their own pending payments and can never write `promoted_until` themselves.
+	Apply `supabase/migrations/20260918000000_admin_panel.sql` last. It creates `admin_emails` with `keylorcascante8@gmail.com`, keeps `admins` in sync with that email whenever the account is created or its address changes, moves the promotion plans into the editable `promotion_plans` table, charges the plan price stored in the database instead of a fixed constraint, and lets the administrator archive, republish, or delete any listing and its photos.
+2. Verify the administrator. Sign in once with `keylorcascante8@gmail.com`; the trigger adds that account to `public.admins` automatically. To change or add an administrator, edit `public.admin_emails` from the Supabase SQL editor:
 
 	```sql
-	insert into public.admins (user_id)
-	select id from auth.users where email = '<admin-email>'
-	on conflict do nothing
-	returning user_id;
+	select email from public.admin_emails;
 	```
 
 	Set `VITE_SINPE_PHONE` and `VITE_SINPE_NAME` (also as GitHub Actions variables) to the SINPE Móvil account that receives the payments. Both values are public. The promotion form is disabled while they are missing or malformed.
@@ -132,7 +133,17 @@ A seller's currency and amount must not be converted or overwritten. Assign an a
 
 Sellers choose a plan, transfer the exact colón total (plan price plus 13% IVA) to the published SINPE Móvil number with the listing reference in the payment detail, and then register the phone they paid from and the receipt number. The request is stored as `pending` and is private to its owner and the administrators.
 
-An administrator listed in `public.admins` opens Promocionar, compares each pending request against the real SINPE Móvil transfers in the bank account, and activates or rejects it with a note. Only that verification sets `promoted_until` on the listing; the database ignores any `promoted_until` a seller tries to write, rejects amounts that do not match the plan, allows a single pending request per listing, and refuses a receipt number that was already claimed. Promotions expire on their own when `promoted_until` passes.
+An administrator listed in `public.admins` opens Promocionar, compares each pending request against the real SINPE Móvil transfers in the bank account, and activates or rejects it with a note. Only that verification sets `promoted_until` on the listing; the database ignores any `promoted_until` a seller tries to write, charges the plan price stored in `promotion_plans` instead of the amount sent by the browser, allows a single pending request per listing, and refuses a receipt number that was already claimed. Promotions expire on their own when `promoted_until` passes.
+
+## Administrator Panel
+
+Only the account whose email is in `public.admin_emails` sees the **Panel** entry in the header, and the database enforces the same rule: every administrator policy calls `public.is_admin()`, so a browser that fakes the UI still cannot read the payment queue or moderate listings.
+
+The panel has three sections:
+
+- **Pagos**: pending SINPE Móvil payments with the amount, plan, paying phone, receipt number, expected payment detail, and seller contact. Activate after confirming the transfer in the bank, or reject with a note the seller will read.
+- **Planes**: create, edit, reorder, hide, or delete promotion plans. Prices are stored without IVA; the 13% is added when charging. A plan that already has payments cannot be deleted, only hidden.
+- **Anuncios**: search every listing and archive, republish, or permanently delete one that breaks the terms, including its stored photos.
 
 ## Live Smoke Test
 
@@ -141,7 +152,7 @@ An administrator listed in `public.admins` opens Promocionar, compares each pend
 3. Publish a CRC listing with a property photo, complete property details, province/canton/district, and contact details. Confirm it appears immediately in a signed-out browser with its contact name, phone, and email. A second signed-in account must not modify it, including through direct API requests.
 4. Clear location filters as needed and verify the listing's photo, original CRC price, display conversion, and approximate canton map location.
 5. Delete the listing as its owner, reload the public view, and confirm it disappears. Sign out and confirm publishing requires sign-in again.
-6. Promote a listing: send the exact SINPE Móvil amount, register the receipt, and confirm the request appears as pending and cannot be duplicated. From an administrator account, verify the transfer in the bank, activate it, and confirm the listing shows the destacada badge and map marker; also confirm a non-administrator account never sees the verification queue and cannot activate its own payment.
+6. Promote a listing: send the exact SINPE Móvil amount, register the receipt, and confirm the request appears as pending and cannot be duplicated. From the administrator account, open **Panel**, verify the transfer in the bank, activate it, and confirm the listing shows the destacada badge and map marker. Edit a plan price and confirm sellers see the new total. Archive and delete a test listing from the Anuncios section. Confirm a non-administrator account never sees the Panel entry and cannot activate its own payment.
 7. Check desktop and mobile layouts, network error/retry behavior, SMTP delivery, logs, auth limits, backups, and restore access before opening registration broadly.
 
 `npm test` executes every migration in embedded PostgreSQL with a minimal Supabase Auth schema and exercises RLS under anonymous and authenticated database roles. The test harness uses PostgreSQL's built-in UUID generator instead of loading `pgcrypto`; live Supabase migration execution remains a separate deployment gate.

@@ -1,20 +1,21 @@
 import { requireSupabase } from './supabase'
 
-export type PromotionPlanId = 'essential' | 'plus' | 'premium'
-export type PromotionPlan = {
-  id: PromotionPlanId
+export type PromotionPlanRow = {
+  id: string
   name: string
-  price: number
-  days: number
   description: string
+  price_crc: number
+  days: number
   features: string[]
+  sort_order: number
+  active: boolean
 }
 export type PromotionStatus = 'pending' | 'active' | 'rejected'
 export type PromotionRow = {
   id: string
   listing_id: string
   owner_id: string
-  plan: PromotionPlanId
+  plan: string
   days: number
   amount_crc: number
   sinpe_phone: string
@@ -28,13 +29,16 @@ export type PromotionRow = {
 }
 
 export const promotionTaxRate = 0.13
-export const promotionPlans: PromotionPlan[] = [
+/** Mirrors the rows seeded by the promotion plan migration; the database stays the source of truth. */
+export const defaultPromotionPlans: PromotionPlanRow[] = [
   {
     id: 'essential',
     name: 'Esencial',
-    price: 9900,
+    price_crc: 9900,
     days: 7,
     description: 'Una primera impresión que cuenta.',
+    sort_order: 1,
+    active: true,
     features: [
       '7 días como propiedad destacada',
       'Insignia en tu anuncio',
@@ -44,9 +48,11 @@ export const promotionPlans: PromotionPlan[] = [
   {
     id: 'plus',
     name: 'Hogar Plus',
-    price: 24900,
+    price_crc: 24900,
     days: 30,
     description: 'Más tiempo. Más oportunidades.',
+    sort_order: 2,
+    active: true,
     features: [
       '30 días como propiedad destacada',
       'Todo lo del plan Esencial',
@@ -56,9 +62,11 @@ export const promotionPlans: PromotionPlan[] = [
   {
     id: 'premium',
     name: 'Premium',
-    price: 39900,
+    price_crc: 39900,
     days: 60,
     description: 'Tu propiedad en primer plano.',
+    sort_order: 3,
+    active: true,
     features: [
       '60 días como propiedad destacada',
       'Todo lo del plan Hogar Plus',
@@ -67,14 +75,21 @@ export const promotionPlans: PromotionPlan[] = [
   },
 ]
 
-export function promotionPlan(id: string) {
-  const plan = promotionPlans.find((option) => option.id === id)
+export function promotionPlan(id: string, plans: PromotionPlanRow[]) {
+  const plan = plans.find((option) => option.id === id && option.active)
   if (!plan) throw new Error('Selecciona un plan de promoción válido.')
   return plan
 }
 
-export function promotionTotal(plan: PromotionPlan) {
-  return Math.round(plan.price * (1 + promotionTaxRate))
+export function promotionTotal(plan: PromotionPlanRow) {
+  return Math.round(plan.price_crc * (1 + promotionTaxRate))
+}
+
+export async function fetchPromotionPlans(includeInactive = false) {
+  const query = requireSupabase().from('promotion_plans').select('*').order('sort_order').limit(50)
+  const { data, error } = includeInactive ? await query : await query.eq('active', true)
+  if (error) throw new Error('No se pudieron cargar los planes de promoción.')
+  return data as PromotionPlanRow[]
 }
 
 export function promotionActive(expires: string | null | undefined) {
@@ -106,26 +121,23 @@ export function normalizeSinpeReference(value: string) {
   return reference
 }
 
-export function promotionRequest(data: FormData, ownerId: string) {
+export function promotionRequest(data: FormData, ownerId: string, plans: PromotionPlanRow[]) {
   const text = (key: string) => String(data.get(key) || '').trim()
   const listingId = text('listing_id')
   if (!ownerId || !listingId) throw new Error('Selecciona el anuncio que quieres promocionar.')
-  const plan = promotionPlan(text('plan'))
   return {
     listing_id: listingId,
     owner_id: ownerId,
-    plan: plan.id,
-    days: plan.days,
-    amount_crc: promotionTotal(plan),
+    plan: promotionPlan(text('plan'), plans).id,
     sinpe_phone: normalizeSinpePhone(text('sinpe_phone')),
     sinpe_reference: normalizeSinpeReference(text('sinpe_reference')),
     status: 'pending' as const,
   }
 }
 
-export async function createPromotionRequest(data: FormData, ownerId: string) {
+export async function createPromotionRequest(data: FormData, ownerId: string, plans: PromotionPlanRow[]) {
   const { data: row, error } = await requireSupabase()
-    .from('listing_promotions').insert(promotionRequest(data, ownerId)).select().single()
+    .from('listing_promotions').insert(promotionRequest(data, ownerId, plans)).select().single()
   if (error) {
     if (error.code === '23505') {
       throw new Error('Ese comprobante ya fue registrado o el anuncio ya tiene una solicitud en revisión.')
