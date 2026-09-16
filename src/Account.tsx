@@ -1,14 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { User } from '@supabase/supabase-js'
-import { ArrowRight, LogOut, Mail, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
-import { deleteListing, fetchOwnedListings, submitListing, type ListingRow } from './lib/listings'
+import { ArrowRight, LogOut, Mail, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { deleteListing, fetchOwnedListings, type ListingRow } from './lib/listings'
 import { requireSupabase, supabase } from './lib/supabase'
 
 const statusLabels = {
-  draft: 'Borrador',
-  pending_review: 'En revisión',
   published: 'Publicado',
-  rejected: 'Rechazado',
   archived: 'Archivado',
 }
 
@@ -111,7 +108,6 @@ export default function Account({ user, loading, signingOut, signOutError, onPub
             {listings.map((listing) => <li key={listing.id}>
               <div><strong>{listing.title}</strong><p>{statusLabels[listing.status]}</p></div>
               <div className="owner-listing-actions">
-                {['draft', 'rejected'].includes(listing.status) && <button className="icon-button" disabled={busy} title="Enviar a revisión" aria-label={`Enviar a revisión: ${listing.title}`} onClick={() => void act(() => submitListing(listing.id, user.id), 'Anuncio enviado a revisión.')}><Send size={18} /></button>}
                 <button className="icon-button" disabled={busy} title="Eliminar anuncio" aria-label={`Eliminar anuncio: ${listing.title}`} onClick={() => {
                   if (window.confirm(`¿Eliminar permanentemente "${listing.title}"?`)) void act(() => deleteListing(listing.id, user.id), 'Anuncio eliminado.')
                 }}><Trash2 size={18} /></button>

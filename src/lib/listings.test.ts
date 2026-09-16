@@ -6,7 +6,7 @@ import { maxPhotoBytes, validateListingPhotos } from './listingPhotos'
 
 function validForm() {
   const form = new FormData()
-  Object.entries({ title: 'Casa en Heredia', canton: 'Belén', province: 'Heredia', type: 'Casa', operation: 'buy', currency: 'CRC', price: '150000000', beds: '3', baths: '2', area: '180', image: 'https://example.com/house.jpg' })
+  Object.entries({ title: 'Casa en Heredia', canton: 'Belén', district: 'San Antonio', province: 'Heredia', type: 'Casa', operation: 'buy', currency: 'CRC', price: '150000000', beds: '3', baths: '2', area: '180', image: 'https://example.com/house.jpg', contact_name: 'Ana Rodríguez', contact_phone: '8888 8888', contact_email: 'ana@example.com' })
     .forEach(([key, value]) => form.set(key, value))
   return form
 }
@@ -38,16 +38,16 @@ function photoForm() {
 }
 
 describe('photo storage workflows', () => {
-  it('uploads to a unique owner path before saving a draft', async () => {
+  it('uploads to a unique owner path before publishing', async () => {
     const { query, storage } = mockBackend()
     await createListing(photoForm(), 'seller')
     const path = storage.upload.mock.calls[0][0]
     expect(path).toMatch(/^seller\/[0-9a-f-]+\.jpg$/)
     expect(storage.upload.mock.calls[0][2]).toEqual({ contentType: 'image/jpeg', upsert: false })
-    expect(query.insert).toHaveBeenCalledWith(expect.objectContaining({ image_paths: [path], image_url: null, status: 'draft' }))
+    expect(query.insert).toHaveBeenCalledWith(expect.objectContaining({ image_paths: [path], image_url: null, status: 'published' }))
     expect(storage.remove).not.toHaveBeenCalled()
   })
-  it('cleans up uploaded photos when saving the draft fails', async () => {
+  it('cleans up uploaded photos when saving the listing fails', async () => {
     const { query, storage } = mockBackend()
     query.single.mockResolvedValue({ data: null, error: new Error('Database unavailable') })
     await expect(createListing(photoForm(), 'seller')).rejects.toThrow('Database unavailable')
@@ -115,14 +115,24 @@ describe('production listings', () => {
     form.append('amenities', 'Unknown')
     expect(() => listingDraft(form, 'seller')).toThrow('comodidades')
   })
-  it('creates only owner-bound drafts and preserves the seller currency', () => {
+  it('publishes owner-bound listings with contact details and canton coordinates', () => {
     const form = validForm()
-    form.set('status', 'published')
+    form.set('status', 'archived')
     form.set('owner_id', 'someone-else')
-    expect(listingDraft(form, 'seller')).toMatchObject({ owner_id: 'seller', status: 'draft', price: 150000000, currency: 'CRC', latitude: null, longitude: null })
+    expect(listingDraft(form, 'seller')).toMatchObject({
+      owner_id: 'seller', status: 'published', price: 150000000, currency: 'CRC',
+      district: 'San Antonio', latitude: 9.9836, longitude: -84.1867,
+      contact_name: 'Ana Rodríguez', contact_phone: '+506 88888888', contact_email: 'ana@example.com',
+    })
   })
 
-  it.each([['price', 'NaN'], ['price', '-1'], ['beds', '2.5'], ['baths', '0'], ['area', 'Infinity'], ['currency', 'EUR'], ['province', 'unknown'], ['title', 'tiny'], ['image', 'javascript:alert(1)'], ['image', 'http://example.com/house.jpg'], ['image', 'https://user:password@example.com/image']])('rejects invalid %s = %s', (key, value) => {
+  it.each([['+506 8888-8888', '+506 88888888'], ['(506) 2222 3333', '+506 22223333'], ['7010 2030', '+506 70102030']])('normalizes the contact phone %s', (input, expected) => {
+    const form = validForm()
+    form.set('contact_phone', input)
+    expect(listingDraft(form, 'seller').contact_phone).toBe(expected)
+  })
+
+  it.each([['price', 'NaN'], ['price', '-1'], ['beds', '2.5'], ['baths', '0'], ['area', 'Infinity'], ['currency', 'EUR'], ['province', 'unknown'], ['canton', 'Belen'], ['canton', 'Escazú'], ['canton', ''], ['district', ''], ['district', 'A'], ['contact_name', 'An'], ['contact_phone', '12345'], ['contact_phone', '9888 8888'], ['contact_email', 'ana@example'], ['contact_email', ''], ['title', 'tiny'], ['image', 'javascript:alert(1)'], ['image', 'http://example.com/house.jpg'], ['image', 'https://user:password@example.com/image']])('rejects invalid %s = %s', (key, value) => {
     const form = validForm()
     form.set(key, value)
     expect(() => listingDraft(form, 'seller')).toThrow()
@@ -134,13 +144,17 @@ describe('production listings', () => {
 
   it('maps database fields without adding fake photos, promotions, or ownership', () => {
     const row: ListingRow = { ...listingDraft(validForm(), 'seller'), id: 'listing', latitude: 10.01, longitude: -84.1 }
-    expect(listingToProperty(row)).toMatchObject({ id: 'listing', price: 150000000, currency: 'CRC', area: 180, coordinates: [10.01, -84.1] })
+    expect(listingToProperty(row)).toMatchObject({
+      id: 'listing', price: 150000000, currency: 'CRC', area: 180, coordinates: [10.01, -84.1],
+      location: 'San Antonio, Belén, Heredia',
+      contact: { name: 'Ana Rodríguez', phone: '+506 88888888', email: 'ana@example.com' },
+    })
     expect(listingToProperty(row).featured).toBeUndefined()
     expect(listingToProperty(row).owner).toBeUndefined()
   })
 
-  it('uses an approximate province center when coordinates are absent', () => {
-    const row: ListingRow = { ...listingDraft(validForm(), 'seller'), id: 'listing' }
-    expect(listingToProperty(row).coordinates).toEqual([10.002, -84.117])
+  it('uses an approximate canton center when coordinates are absent', () => {
+    const row: ListingRow = { ...listingDraft(validForm(), 'seller'), id: 'listing', latitude: null, longitude: null }
+    expect(listingToProperty(row).coordinates).toEqual([9.9836, -84.1867])
   })
 })

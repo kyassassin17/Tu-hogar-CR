@@ -1,10 +1,14 @@
 export type Currency = 'USD' | 'CRC'
 export type Operation = 'buy' | 'rent'
+export type ListingContact = { name: string; phone: string; email: string }
 export type Property = {
   id: string
   title: string
   location: string
   province: string
+  canton?: string
+  district?: string
+  contact?: ListingContact
   type: 'Casa' | 'Apartamento'
   operation: Operation
   price: number

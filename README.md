@@ -36,18 +36,22 @@ This release connects real email-link accounts and shared property listings to S
 - Real property photos and amenities, without fabricated gallery images or descriptions.
 - Favorites and saved searches that persist in the current browser, not the account.
 - Supabase email-link registration, sign-in, session restoration, and sign-out.
-- Authenticated draft creation with all seven provinces, original USD/CRC prices, and up to eight JPEG/PNG uploads (5 MB each), previews, removal, and a photo gallery. An external HTTPS photo URL remains supported; at least one photo is required.
+- Authenticated self-publishing with mandatory property details: title, operation, type, province, canton, district, price, currency, bedrooms, bathrooms, area, at least one photo, and seller contact details. Up to eight JPEG/PNG uploads (5 MB each), previews, removal, and a photo gallery. An external HTTPS photo URL remains supported.
+- Mandatory seller/landlord contact details (name, Costa Rican phone, email) published with each listing so interested people can contact the owner directly.
+- Province, canton, and district address fields; the map places each listing at the approximate center of its canton.
 - Sign-out from the header or Mi cuenta, with pending and failure feedback.
-- Owner listing status, review submission, refresh, and deletion.
-- Public inventory limited to published listings; owner drafts remain private under database row-level security.
+- Owner listing status, refresh, and deletion. Listings publish immediately without administrator approval.
+- Public inventory limited to published listings; archived listings remain private under database row-level security.
 - Loading, empty, and retry states; failed requests never fall back to demo inventory.
 - Responsive desktop, tablet, and phone layouts, keyboard-accessible dialogs, and reduced-motion support.
 
 ## Disabled And Limited Features
 
-Payments, paid promotions, and inquiry submission are disabled in production. No payment information or inquiry messages are collected. Saved searches do not send email alerts. Currency conversion remains a clearly labeled reference rate of CRC 510 per USD, not a live rate. Map positions are approximate province centers unless a moderator supplies coordinates.
+Payments, paid promotions, and inquiry submission are disabled in production. No payment information or inquiry messages are collected; buyers contact sellers directly using the contact details published on each listing. Saved searches do not send email alerts. Currency conversion remains a clearly labeled reference rate of CRC 510 per USD, not a live rate. Map positions are approximate canton centers, not verified addresses.
 
-The public search loads up to the newest 1,000 published listings and filters them in the browser. Add server-side search and pagination before growing beyond that limit. Uploaded photos use a private Supabase Storage bucket. Owners can access their photos; anonymous visitors can request signed URLs only for published listings. Signed URLs expire after one hour, and the app refreshes them periodically and on window focus. Previously issued URLs remain usable until expiry after sign-out or listing deletion. Review image rights and content before approval. Owners can submit or delete drafts; a full editing workflow is not included.
+Listings are published by their owners without prior review. There is no approval queue, automated moderation, or content screening; add abuse reporting, takedown handling, and after-the-fact moderation tooling before opening registration broadly. Contact details submitted by sellers become publicly visible, so the publishing form states this and privacy/terms pages are still required.
+
+The public search loads up to the newest 1,000 published listings and filters them in the browser. Add server-side search and pagination before growing beyond that limit. Uploaded photos use a private Supabase Storage bucket. Owners can access their photos; anonymous visitors can request signed URLs only for published listings. Signed URLs expire after one hour, and the app refreshes them periodically and on window focus. Previously issued URLs remain usable until expiry after sign-out or listing deletion. Owners can publish or delete listings; a full editing workflow is not included.
 
 Client validation checks file size, MIME type, extension, and JPEG/PNG signatures; Storage also enforces MIME type and size limits. This is not malware scanning or full server-side image decoding. Add server-side inspection, metadata stripping, upload quotas, and orphan cleanup before accepting high-volume uploads. Failed submissions attempt cleanup; deleting an owner listing removes its stored photos. Interrupted browser sessions can leave unreferenced uploads. Referenced photos cannot be overwritten or deleted through the client, preserving moderation integrity.
 
@@ -65,8 +69,8 @@ An internet connection is required for Supabase and these external assets.
 
 Before accepting real listings or money:
 
-1. Apply all three database migrations, configure authentication, and assign a moderator. Database and Storage policies are implemented, but production project configuration must still be verified.
-2. Verify property information, uploaded photos, and precise owner-approved map coordinates.
+1. Apply all four database migrations and configure authentication. Database and Storage policies are implemented, but production project configuration must still be verified.
+2. Publish privacy and terms pages covering publicly visible seller contact details, and set up abuse reporting and takedown handling.
 3. Integrate a payment provider that supports the operating business in Costa Rica. Create checkout sessions server-side and activate promotions only after verified, idempotent payment webhooks.
 4. Add receipts, refunds, promotion lifecycle jobs, tax validation, and an audit trail. Never trust browser-supplied prices or ownership.
 5. Add secure inquiry delivery, consent, privacy/terms pages, abuse protection, and rate limits.
@@ -75,9 +79,10 @@ Before accepting real listings or money:
 
 ## Main Files
 
-- `src/App.tsx`: marketplace views, public inventory loading, and draft publication.
+- `src/App.tsx`: marketplace views, public inventory loading, and listing publication.
 - `src/Account.tsx`: email-link authentication and owner listing management.
 - `src/lib/listings.ts`: Supabase listing operations, validation, and database-to-UI mapping.
+- `src/lib/costaRica.ts`: provinces, cantons, and approximate map coordinates.
 - `src/App.css` and `src/index.css`: responsive design and shared styles.
 - `src/marketplace.ts`: property model, sample listings, filtering, and price formatting.
 - `src/marketplace.test.ts` and `src/lib/*.test.ts`: search, currency, input, configuration, and PostgreSQL row-level security tests.
@@ -86,35 +91,35 @@ Before accepting real listings or money:
 
 1. Back up the target Supabase database. Apply `supabase/migrations/20260914000000_create_listings.sql` if not already applied, then `supabase/migrations/20260915000000_harden_listing_moderation.sql`, using the Supabase SQL editor or your migration process. Do not rerun the initial migration on an existing schema. The new constraints validate existing rows; review and correct incompatible data instead of bypassing constraints.
 	Apply `supabase/migrations/20260915010000_listing_photos.sql` before releasing the upload UI. It adds `image_paths`, permits uploaded-photo listings without an external URL, and creates the private `listing-photos` bucket with owner-scoped upload/read/delete policies. Existing HTTPS-only listings remain valid. Do not make this bucket public or add broad write policies. Test uploads, publication, signed image access, and deletion with two different accounts and an anonymous browser.
+	Apply `supabase/migrations/20260916000000_self_publishing.sql` last. It adds `district` and the required `contact_name`, `contact_phone`, and `contact_email` columns, limits `status` to `published` and `archived`, lets owners publish their own listings, and requires contact details plus coordinates on published rows. Listings created before this migration have no contact details and are archived; their owners must republish them with complete information.
 2. In Supabase Authentication, enable email authentication and new-user registration. Require email confirmation. Configure production SMTP with a verified sender: Supabase's default mail service has delivery restrictions unsuitable for general public registration. Configure appropriate auth rate limits and review CAPTCHA requirements before broad public access.
 3. Set the Auth Site URL and allowed redirect URL to `https://kyassassin17.github.io/Tu-hogar-CR/`. Add the exact local testing URL separately, such as `http://127.0.0.1:5180/`. Keep the email template's standard confirmation link; this app consumes the resulting session automatically. Do not use wildcard production redirects.
 4. Set GitHub repository Actions secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to the same production project's URL and public key. `.env.local` is ignored by Git and is not used by GitHub Actions. Both legacy anon JWTs and current `sb_publishable_*` keys are supported; builds reject missing, placeholder, expired, and privileged keys. Structural validation does not prove a key is valid for a project.
 5. In GitHub Settings > Pages, select **GitHub Actions** as the source. Configure branch protection to require the pull-request validation job. Merging the reviewed changes into `main` runs lint, tests, and the production build, then deploys only on success. Builds use `/Tu-hogar-CR/` as the base path, including the home link and auth redirect.
-6. Run the live smoke test below, approve a verified listing, and confirm the public site from another browser. No migration or remote deployment is performed by `npm run build`.
+6. Run the live smoke test below and confirm the public site from another browser. No migration or remote deployment is performed by `npm run build`.
 
-## Moderation
+## Publishing And Content Responsibility
 
-New listings are saved as `draft`. Owners send them to `pending_review` from **Mi cuenta**. The database locks pending and published listings against owner edits; only an administrator using the Supabase dashboard or a trusted server can approve them. Never grant a browser user a service-role key.
+Signed-in owners publish their own listings directly; there is no approval step. The publishing form requires every property detail, the province/canton/district address, and the seller or landlord contact details that are shown publicly on the listing. The database enforces the same requirements, so a published row cannot exist without them.
 
-Review the property, price/currency, photo rights and content, location, and abuse reports before approval. In the Supabase SQL editor, replace the placeholder with a verified pending listing ID:
+Owners can only create rows they own, with status `published` or `archived`, and can delete their own listings. Never grant a browser user a service-role key. To withdraw abusive or unlawful content from the Supabase SQL editor:
 
 ```sql
 update public.listings
-set status = 'published'
-where id = '<verified-listing-uuid>'::uuid
-	and status = 'pending_review'
+set status = 'archived'
+where id = '<listing-uuid>'::uuid
 returning id, status;
 ```
 
-Use `rejected` instead of `published` to reject a pending listing, or `archived` to withdraw a published one. An approved listing's seller currency and amount must not be converted or overwritten. Set real coordinates only with the owner's approval. Assign an actual operator to this process; there is no browser admin panel, automated moderation, or moderation audit trail yet.
+A seller's currency and amount must not be converted or overwritten. Assign an actual operator to abuse reports and takedowns; there is no browser admin panel, automated moderation, or moderation audit trail yet.
 
 ## Live Smoke Test
 
 1. In a fresh browser, confirm that only published inventory appears and no sample listings or promotions appear.
 2. Sign in using a real mailbox, follow the single-use email link, reload, and confirm the session restores at the correct Pages URL. Verify expired links and resend behavior.
-3. Create a CRC draft with a property photo. Confirm it is visible only in the owner's account, then send it for review. A second signed-in account must not read or modify the draft, including through direct API requests.
-4. Approve the pending listing as an administrator. Reload a signed-out browser, clear location filters as needed, and verify its photo, original CRC price, display conversion, and approximate map location.
+3. Publish a CRC listing with a property photo, complete property details, province/canton/district, and contact details. Confirm it appears immediately in a signed-out browser with its contact name, phone, and email. A second signed-in account must not modify it, including through direct API requests.
+4. Clear location filters as needed and verify the listing's photo, original CRC price, display conversion, and approximate canton map location.
 5. Delete the listing as its owner, reload the public view, and confirm it disappears. Sign out and confirm publishing requires sign-in again.
 6. Check desktop and mobile layouts, network error/retry behavior, SMTP delivery, logs, auth limits, backups, and restore access before opening registration broadly.
 
-`npm test` executes both migrations in embedded PostgreSQL with a minimal Supabase Auth schema and exercises RLS under anonymous and authenticated database roles. The test harness uses PostgreSQL's built-in UUID generator instead of loading `pgcrypto`; live Supabase migration execution remains a separate deployment gate.
+`npm test` executes every migration in embedded PostgreSQL with a minimal Supabase Auth schema and exercises RLS under anonymous and authenticated database roles. The test harness uses PostgreSQL's built-in UUID generator instead of loading `pgcrypto`; live Supabase migration execution remains a separate deployment gate.

@@ -26,10 +26,12 @@ import {
   Leaf,
   LocateFixed,
   LogOut,
+  Mail,
   Map as MapIcon,
   MapPin,
   Menu,
   MessageCircle,
+  Phone,
   Plus,
   Search,
   ShieldCheck,
@@ -49,6 +51,7 @@ import Account from './Account'
 import ListingPhotoPicker from './ListingPhotoPicker'
 import { demoMode, requireSupabase, supabase } from './lib/supabase'
 import { createListing, fetchPublishedListings } from './lib/listings'
+import { cantonsOf, locationCoordinates, provinces as costaRicaProvinces } from './lib/costaRica'
 import 'leaflet/dist/leaflet.css'
 import {
   amenityOptions,
@@ -406,6 +409,7 @@ function App() {
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState('')
   const [photos, setPhotos] = useState<File[]>([])
+  const [publishProvince, setPublishProvince] = useState(costaRicaProvinces[0])
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [searchText, setSearchText] = useState(initialFilters.query)
   const [saved, setSaved] = useLocalState<string[]>('hogar-cr-favorites', [])
@@ -442,6 +446,8 @@ function App() {
     if (next !== 'publish') {
       setPhotos([])
       setPublishError('')
+    } else {
+      setPublishProvince(costaRicaProvinces[0])
     }
     setModalState(next)
   }
@@ -636,8 +642,9 @@ function App() {
       setPublishError('')
       try {
         await createListing(data, user.id)
-        setModal('account')
-        setToast('Borrador guardado. Envíalo a revisión desde Mis anuncios.')
+        setModal(null)
+        reloadListings()
+        setToast('Anuncio publicado. Ya está visible para todos.')
       } catch (error) {
         setPublishError(error instanceof Error ? error.message : 'No se pudo guardar el anuncio. Intenta de nuevo.')
       } finally {
@@ -656,20 +663,20 @@ function App() {
     })))
     if (data.get('image')) images.push(String(data.get('image')))
     const province = String(data.get('province'))
-    const coordinates: Record<string, [number, number]> = {
-      'San José': [9.932, -84.084],
-      Heredia: [10.002, -84.117],
-      Alajuela: [10.016, -84.211],
-      Cartago: [9.864, -83.919],
-      Guanacaste: [10.633, -85.438],
-      Puntarenas: [9.977, -84.834],
-      Limón: [9.99, -83.036],
-    }
+    const canton = String(data.get('canton'))
+    const district = String(data.get('district'))
     const newProperty: Property = {
       id: `cr-${Date.now()}`,
       title: String(data.get('title')),
-      location: `${data.get('canton')}, ${province}`,
+      location: `${district}, ${canton}, ${province}`,
       province,
+      canton,
+      district,
+      contact: {
+        name: String(data.get('contact_name')),
+        phone: String(data.get('contact_phone')),
+        email: String(data.get('contact_email')),
+      },
       type: data.get('type') as Property['type'],
       operation: data.get('operation') as Operation,
       price: Number(data.get('price')),
@@ -681,7 +688,7 @@ function App() {
         images[0] ||
         imageUrl('photo-1600596542815-ffad4c1539a9'),
       images: images.length ? images : undefined,
-      coordinates: coordinates[province],
+      coordinates: locationCoordinates(province, canton)!,
       amenities: data.getAll('amenities').map(String),
       tag: 'NUEVA',
       owner: true,
@@ -1491,7 +1498,7 @@ function App() {
             <div className="demo-notice">
               <House size={19} />
               <p>
-                {demoMode ? 'Publicación de demostración: tu anuncio será visible solo en este navegador. Usa información de ejemplo.' : 'Los anuncios requieren revisión antes de aparecer públicamente.'}
+                {demoMode ? 'Publicación de demostración: tu anuncio será visible solo en este navegador. Usa información de ejemplo.' : 'Todos los campos son obligatorios. Tu anuncio se publica de inmediato, sin revisión previa, con los datos de contacto que indiques.'}
               </p>
             </div>
             <label>
@@ -1523,27 +1530,33 @@ function App() {
             <div className="form-row">
               <label>
                 Provincia
-                <select name="province">
-                  {[
-                    'San José',
-                    'Alajuela',
-                    'Cartago',
-                    'Heredia',
-                    'Guanacaste',
-                    'Puntarenas',
-                    'Limón',
-                  ].map((province) => (
+                <select
+                  name="province"
+                  required
+                  value={publishProvince}
+                  onChange={(event) => setPublishProvince(event.target.value)}
+                >
+                  {costaRicaProvinces.map((province) => (
                     <option key={province}>{province}</option>
                   ))}
                 </select>
               </label>
               <label>
-                Cantón o zona
+                Cantón
+                <select name="canton" required key={publishProvince}>
+                  {cantonsOf(publishProvince).map((canton) => (
+                    <option key={canton}>{canton}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Distrito
                 <input
-                  name="canton"
+                  name="district"
                   required
-                  placeholder="Ej. Escazú"
+                  minLength={2}
                   maxLength={60}
+                  placeholder="Ej. San Rafael"
                 />
               </label>
             </div>
@@ -1628,14 +1641,53 @@ function App() {
                 ))}
               </div>
             </div>
+            <div>
+              <div className="field-label">Datos de contacto del anuncio</div>
+              <p className="field-note">
+                Estos datos se publican con la propiedad para que las personas
+                interesadas te contacten directamente.
+              </p>
+              <label>
+                Nombre de contacto
+                <input
+                  name="contact_name"
+                  required
+                  minLength={3}
+                  maxLength={80}
+                  placeholder="Ej. Ana Rodríguez"
+                />
+              </label>
+              <div className="form-row">
+                <label>
+                  Teléfono
+                  <input
+                    name="contact_phone"
+                    type="tel"
+                    required
+                    maxLength={20}
+                    placeholder="8888 8888"
+                  />
+                </label>
+                <label>
+                  Correo de contacto
+                  <input
+                    name="contact_email"
+                    type="email"
+                    required
+                    maxLength={254}
+                    placeholder="vos@ejemplo.com"
+                  />
+                </label>
+              </div>
+            </div>
             <p className="field-note">
               Los precios CRC usan una referencia de ₡510 por dólar. El mapa
-              muestra el centro aproximado de la provincia.
+              muestra el centro aproximado del cantón seleccionado.
             </p>
             <div className="dialog-actions">
               <span className="field-note">Publicación gratuita</span>
               <button className="button button-primary" disabled={publishing}>
-                <Plus size={18} /> {publishing ? 'Guardando...' : demoMode ? 'Publicar en la demo' : 'Guardar borrador'}
+                <Plus size={18} /> {publishing ? 'Publicando...' : demoMode ? 'Publicar en la demo' : 'Publicar anuncio'}
               </button>
             </div>
             {publishError && <p role="alert">{publishError}</p>}
@@ -1983,7 +2035,30 @@ function App() {
                   'Tipo de cambio de referencia: ₡510 por dólar.'}
               </p>
             </div>
-            {demoMode ? <aside className="contact-panel">
+            {selected.contact ? <aside className="contact-panel">
+              <div className="agent-heading">
+                <span className="agent-avatar">
+                  <UserRound size={22} />
+                </span>
+                <div>
+                  <strong>{selected.contact.name}</strong>
+                  <span>
+                    <ShieldCheck size={13} /> Persona anunciante
+                  </span>
+                </div>
+              </div>
+              <h3>Contacta directamente</h3>
+              <a className="button button-primary" href={`tel:${selected.contact.phone.replace(/\s/g, '')}`}>
+                <Phone size={17} /> {selected.contact.phone}
+              </a>
+              <a className="button button-secondary" href={`mailto:${encodeURIComponent(selected.contact.email)}`}>
+                <Mail size={17} /> {selected.contact.email}
+              </a>
+              <p className="field-note">
+                Datos de contacto publicados por quien anuncia la propiedad.
+                Hogar-CR no intermedia ni verifica la negociación.
+              </p>
+            </aside> : demoMode ? <aside className="contact-panel">
               <div className="agent-heading">
                 <span className="agent-avatar">
                   <UserRound size={22} />
@@ -2054,7 +2129,7 @@ function App() {
                   </p>
                 </form>
               )}
-            </aside> : <aside className="contact-panel"><h3>Contacto</h3><p>Las consultas a propietarios aún no están disponibles.</p></aside>}
+            </aside> : <aside className="contact-panel"><h3>Contacto</h3><p>Este anuncio no tiene datos de contacto publicados.</p></aside>}
           </div>
         </Dialog>
       )}
