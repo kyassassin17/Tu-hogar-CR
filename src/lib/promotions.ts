@@ -83,9 +83,13 @@ export function promotionActive(expires: string | null | undefined) {
 
 /** SINPE Móvil account that receives the promotion payments. */
 export function sinpeAccount() {
-  const phone = String(import.meta.env.VITE_SINPE_PHONE || '').trim()
   const name = String(import.meta.env.VITE_SINPE_NAME || '').trim()
-  return /^\+506 [5-8]\d{7}$/.test(phone) && name ? { phone, name } : null
+  if (!name) return null
+  try {
+    return { phone: normalizeSinpePhone(String(import.meta.env.VITE_SINPE_PHONE || '')), name }
+  } catch {
+    return null
+  }
 }
 
 export function normalizeSinpePhone(value: string) {

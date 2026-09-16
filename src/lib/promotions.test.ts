@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   promotionActive,
   promotionPlan,
@@ -7,6 +7,7 @@ import {
   promotionTotal,
   normalizeSinpePhone,
   normalizeSinpeReference,
+  sinpeAccount,
 } from './promotions'
 
 function validForm() {
@@ -19,6 +20,19 @@ function validForm() {
 }
 
 describe('SINPE Móvil promotions', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it.each(['8714-3820', '87143820', '+506 8714 3820', '(506) 87143820'])('accepts the configured collection number %s', (configured) => {
+    vi.stubEnv('VITE_SINPE_PHONE', configured)
+    vi.stubEnv('VITE_SINPE_NAME', 'Encuentra tu hogar ltda.')
+    expect(sinpeAccount()).toEqual({ phone: '+506 87143820', name: 'Encuentra tu hogar ltda.' })
+  })
+
+  it.each([['', 'Hogar'], ['2222 3333', 'Hogar'], ['87143820', '']])('disables promotions for phone %s and name %s', (phone, name) => {
+    vi.stubEnv('VITE_SINPE_PHONE', phone)
+    vi.stubEnv('VITE_SINPE_NAME', name)
+    expect(sinpeAccount()).toBeNull()
+  })
   it('charges the plan price plus 13% IVA', () => {
     expect(promotionPlans.map((plan) => promotionTotal(plan))).toEqual([11187, 28137, 45087])
     expect(promotionPlan('premium').days).toBe(60)
