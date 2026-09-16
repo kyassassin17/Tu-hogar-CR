@@ -28,7 +28,15 @@ describe('Costa Rican property search', () => {
       maxPrice: '300000',
       amenity: 'Jardín',
     })
-    expect(results.map((property) => property.id)).toEqual(['cr-103', 'cr-104'])
+    expect(results.map((property) => property.id)).toEqual(['cr-103', 'cr-104', 'cr-108'])
+  })
+  it('shows every province until a location is searched', () => {
+    expect(initialFilters.query).toBe('')
+    const results = filterProperties(properties, initialFilters)
+    expect(results).toHaveLength(8)
+    expect(new Set(results.map((property) => property.province))).toEqual(
+      new Set(['San José', 'Guanacaste', 'Heredia']),
+    )
   })
   it('uses the displayed currency for price bounds', () => {
     const dollars = filterProperties(properties, {

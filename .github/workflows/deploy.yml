@@ -40,6 +40,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_SINPE_PHONE: ${{ vars.VITE_SINPE_PHONE }}
+          VITE_SINPE_NAME: ${{ vars.VITE_SINPE_NAME }}
         run: npm run build
 
       - name: Upload Pages artifact

@@ -142,14 +142,16 @@ describe('production listings', () => {
     expect(() => listingDraft(validForm(), '')).toThrow()
   })
 
-  it('maps database fields without adding fake photos, promotions, or ownership', () => {
+  it('maps database fields and the verified promotion window without adding fake photos or ownership', () => {
     const row: ListingRow = { ...listingDraft(validForm(), 'seller'), id: 'listing', latitude: 10.01, longitude: -84.1 }
     expect(listingToProperty(row)).toMatchObject({
       id: 'listing', price: 150000000, currency: 'CRC', area: 180, coordinates: [10.01, -84.1],
       location: 'San Antonio, Belén, Heredia',
       contact: { name: 'Ana Rodríguez', phone: '+506 88888888', email: 'ana@example.com' },
     })
-    expect(listingToProperty(row).featured).toBeUndefined()
+    expect(listingToProperty(row).featured).toBe(false)
+    expect(listingToProperty({ ...row, promoted_until: new Date(Date.now() - 1000).toISOString() }).featured).toBe(false)
+    expect(listingToProperty({ ...row, promoted_until: new Date(Date.now() + 86400000).toISOString() }).featured).toBe(true)
     expect(listingToProperty(row).owner).toBeUndefined()
   })
 

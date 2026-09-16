@@ -256,7 +256,7 @@ export type Filters = {
 }
 
 export const initialFilters: Filters = {
-  query: 'San José',
+  query: '',
   operation: 'buy',
   type: '',
   minPrice: '',

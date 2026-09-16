@@ -1,5 +1,6 @@
 import { amenityOptions, type Property } from '../marketplace'
 import { cantonsByProvince, locationCoordinates, provinceCoordinates } from './costaRica'
+import { promotionActive } from './promotions'
 import { requireSupabase } from './supabase'
 import { photoBucket, selectedPhotos, validateListingPhotos } from './listingPhotos'
 
@@ -29,6 +30,7 @@ export type ListingRow = {
   contact_phone: string
   contact_email: string
   status: ListingStatus
+  promoted_until?: string | null
 }
 
 export function listingToProperty(row: ListingRow, photos: string[] = []): Property {
@@ -53,6 +55,7 @@ export function listingToProperty(row: ListingRow, photos: string[] = []): Prope
       ? [Number(row.latitude), Number(row.longitude)]
       : locationCoordinates(row.province, row.canton) ?? provinceCoordinates['San José'],
     amenities: row.amenities,
+    featured: promotionActive(row.promoted_until),
     contact: { name: row.contact_name, phone: row.contact_phone, email: row.contact_email },
   }
 }

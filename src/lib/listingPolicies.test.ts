@@ -2,6 +2,7 @@ import initialMigration from '../../supabase/migrations/20260914000000_create_li
 import moderationMigration from '../../supabase/migrations/20260915000000_harden_listing_moderation.sql?raw'
 import photosMigration from '../../supabase/migrations/20260915010000_listing_photos.sql?raw'
 import selfPublishingMigration from '../../supabase/migrations/20260916000000_self_publishing.sql?raw'
+import promotionsMigration from '../../supabase/migrations/20260917000000_listing_promotions.sql?raw'
 import { PGlite } from '@electric-sql/pglite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -9,6 +10,8 @@ const ownerId = '11111111-1111-4111-8111-111111111111'
 const otherId = '22222222-2222-4222-8222-222222222222'
 const archivedId = '33333333-3333-4333-8333-333333333333'
 const publicId = '44444444-4444-4444-8444-444444444444'
+const adminId = '55555555-5555-4555-8555-555555555555'
+const promotionId = '66666666-6666-4666-8666-666666666666'
 const contactColumns = "'San Antonio', 'Ana Rodríguez', '+506 88888888', 'ana@example.com', 9.9836, -84.1867"
 let database: PGlite
 
@@ -23,7 +26,7 @@ beforeAll(async () => {
       $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
     grant usage on schema auth, public to anon, authenticated;
     grant execute on function auth.uid() to anon, authenticated;
-    insert into auth.users values ('${ownerId}'), ('${otherId}');
+    insert into auth.users values ('${ownerId}'), ('${otherId}'), ('${adminId}');
   `)
   await database.exec(initialMigration.replace('create extension if not exists "pgcrypto";', ''))
   await database.exec(moderationMigration)
@@ -45,16 +48,26 @@ beforeAll(async () => {
     ('${publicId}', '${ownerId}', 'Public home', 'Heredia', 'Belén', 'Casa', 'buy', 150000000, 'CRC', 3, 2, 180, 'https://example.com/house.jpg', 'published', ${contactColumns});
     update public.listings set image_url = null, image_paths = array[owner_id::text || '/' || id::text || '.jpg'];
     insert into storage.objects values ('listing-photos', '${ownerId}/${archivedId}.jpg'), ('listing-photos', '${ownerId}/${publicId}.jpg'), ('listing-photos', '${ownerId}/${otherId}.png');`)
+  await database.exec(promotionsMigration)
+  await database.exec(`insert into public.admins (user_id) values ('${adminId}');
+    insert into public.listing_promotions (id, listing_id, owner_id, plan, days, amount_crc, sinpe_phone, sinpe_reference)
+    values ('${promotionId}', '${publicId}', '${ownerId}', 'plus', 30, 28137, '+506 88887777', 'SINPE-1001');`)
 }, 30000)
 
 afterAll(async () => { await database?.close() })
 
 async function asUser(role: 'anon' | 'authenticated', userId: string, query: string) {
+  return (await asUserAll(role, userId, [query]))[0]
+}
+
+async function asUserAll(role: 'anon' | 'authenticated', userId: string, queries: string[]) {
   await database.exec('begin')
   try {
     await database.exec(`set local role ${role}`)
     await database.query("select set_config('request.jwt.claim.sub', $1, true)", [userId])
-    return await database.query(query)
+    const results = []
+    for (const query of queries) results.push(await database.query(query))
+    return results
   } finally {
     await database.exec('rollback')
   }
@@ -124,5 +137,50 @@ describe('listing row-level security', () => {
     const result = asUser('authenticated', ownerId, `insert into public.listings (owner_id, title, province, canton, property_type, operation, price, currency, beds, baths, area_m2, image_url, status, district, contact_name, contact_phone, contact_email, latitude, longitude) values ('${insertOwner}', 'New house', 'Heredia', 'Belén', 'Casa', 'buy', 100, 'USD', 2, 1, 100, 'https://example.com/house.jpg', '${status}', ${contactColumns}) returning id`)
     if (allowed) expect((await result).rows).toHaveLength(1)
     else await expect(result).rejects.toThrow()
+  })
+})
+
+const columns = 'listing_id, owner_id, plan, days, amount_crc, sinpe_phone, sinpe_reference'
+const request = (listing: string, owner: string, reference: string, amount = 28137) =>
+  `insert into public.listing_promotions (${columns}) values ('${listing}', '${owner}', 'plus', 30, ${amount}, '+506 88887777', '${reference}') returning id`
+
+describe('SINPE promotion payments', () => {
+  it('keeps payment records private to their owner and the administrators', async () => {
+    await expect(asUser('anon', '', 'select id from public.listing_promotions')).rejects.toThrow(/permission denied/)
+    expect((await asUser('authenticated', otherId, 'select id from public.listing_promotions')).rows).toEqual([])
+    expect((await asUser('authenticated', ownerId, 'select id from public.listing_promotions')).rows).toEqual([{ id: promotionId }])
+    expect((await asUser('authenticated', adminId, 'select id from public.listing_promotions')).rows).toEqual([{ id: promotionId }])
+  })
+  it('accepts pending requests only for a published listing of the paying owner', async () => {
+    await expect(asUser('authenticated', ownerId, request(archivedId, ownerId, 'SINPE-1002'))).rejects.toThrow(/row-level security/)
+    await expect(asUser('authenticated', otherId, request(publicId, otherId, 'SINPE-1003'))).rejects.toThrow(/row-level security/)
+    await expect(asUser('authenticated', ownerId, request(publicId, ownerId, 'SINPE-1001'))).rejects.toThrow(/duplicate key/)
+    await expect(asUser('authenticated', ownerId, `insert into public.listing_promotions (${columns}, status) values ('${publicId}', '${ownerId}', 'plus', 30, 28137, '+506 88887777', 'SINPE-1004', 'active')`)).rejects.toThrow()
+  })
+  it('rejects amounts and receipts that do not match a published plan', async () => {
+    await expect(asUser('authenticated', ownerId, request(publicId, ownerId, 'SINPE-1005', 100))).rejects.toThrow(/plan_price_check/)
+    await expect(asUser('authenticated', ownerId, request(publicId, ownerId, 'bad ref'))).rejects.toThrow(/sinpe_reference_check/)
+  })
+  it('never lets a seller activate a promotion or set the promoted window', async () => {
+    expect((await asUser('authenticated', ownerId, `update public.listing_promotions set status = 'active' where id = '${promotionId}' returning status`)).rows).toEqual([])
+    expect((await asUser('authenticated', ownerId, `update public.listings set promoted_until = now() + interval '30 days' where id = '${publicId}' returning promoted_until`)).rows).toEqual([{ promoted_until: null }])
+    await expect(asUser('authenticated', ownerId, `update public.listing_promotions set days = 60 where id = '${promotionId}'`)).rejects.toThrow(/permission denied/)
+  })
+  it('promotes the listing when an administrator verifies the payment', async () => {
+    const [review, listing] = await asUserAll('authenticated', adminId, [
+      `update public.listing_promotions set status = 'active' where id = '${promotionId}' returning status, reviewed_by, expires_at > now() as running`,
+      `select promoted_until > now() as promoted from public.listings where id = '${publicId}'`,
+    ])
+    expect(review.rows).toEqual([{ status: 'active', reviewed_by: adminId, running: true }])
+    expect(listing.rows).toEqual([{ promoted: true }])
+  })
+  it('lets an administrator reject a payment and review every listing', async () => {
+    expect((await asUser('authenticated', adminId, `update public.listing_promotions set status = 'rejected', review_note = 'No aparece el SINPE.' where id = '${promotionId}' returning status, reviewed_at is not null as reviewed`)).rows)
+      .toEqual([{ status: 'rejected', reviewed: true }])
+    expect((await asUser('authenticated', adminId, 'select id from public.listings order by id')).rows).toEqual([{ id: archivedId }, { id: publicId }])
+  })
+  it('lets sellers cancel a pending request but not another seller request', async () => {
+    expect((await asUser('authenticated', otherId, `delete from public.listing_promotions where id = '${promotionId}' returning id`)).rows).toEqual([])
+    expect((await asUser('authenticated', ownerId, `delete from public.listing_promotions where id = '${promotionId}' returning id`)).rows).toEqual([{ id: promotionId }])
   })
 })

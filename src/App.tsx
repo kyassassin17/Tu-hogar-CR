@@ -48,9 +48,11 @@ import { MapContainer, Marker, TileLayer, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import type { User } from '@supabase/supabase-js'
 import Account from './Account'
+import Promotions from './Promotions'
 import ListingPhotoPicker from './ListingPhotoPicker'
 import { demoMode, requireSupabase, supabase } from './lib/supabase'
 import { createListing, fetchPublishedListings } from './lib/listings'
+import { promotionPlans } from './lib/promotions'
 import { cantonsOf, locationCoordinates, provinces as costaRicaProvinces } from './lib/costaRica'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -355,47 +357,8 @@ function PropertyCard({
   )
 }
 
-const plans = [
-  {
-    id: 'essential',
-    name: 'Esencial',
-    price: 9900,
-    days: 7,
-    description: 'Una primera impresión que cuenta.',
-    icon: Zap,
-    features: [
-      '7 días como propiedad destacada',
-      'Insignia en tu anuncio',
-      'Posición preferente en búsquedas',
-    ],
-  },
-  {
-    id: 'plus',
-    name: 'Hogar Plus',
-    price: 24900,
-    days: 30,
-    description: 'Más tiempo. Más oportunidades.',
-    icon: Sparkles,
-    features: [
-      '30 días como propiedad destacada',
-      'Todo lo del plan Esencial',
-      'Marcador destacado en el mapa',
-    ],
-  },
-  {
-    id: 'premium',
-    name: 'Premium',
-    price: 39900,
-    days: 60,
-    description: 'Tu propiedad en primer plano.',
-    icon: Star,
-    features: [
-      '60 días como propiedad destacada',
-      'Todo lo del plan Hogar Plus',
-      'Mayor duración de exposición',
-    ],
-  },
-]
+const planIcons = { essential: Zap, plus: Sparkles, premium: Star }
+const plans = promotionPlans.map((plan) => ({ ...plan, icon: planIcons[plan.id] }))
 
 function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -598,10 +561,6 @@ function App() {
     setContactSent(false)
   }
   function openPromote() {
-    if (!demoMode) {
-      setToast('Las promociones pagadas no están disponibles.')
-      return
-    }
     setModal('promote')
     setCheckout(false)
     setPromotionComplete(false)
@@ -784,9 +743,9 @@ function App() {
           >
             Vender
           </button>
-          {demoMode && <button className="promote-nav" onClick={openPromote}>
+          <button className="promote-nav" onClick={openPromote}>
             <Sparkles size={15} /> Promocionar
-          </button>}
+          </button>
         </nav>
         <div className="header-actions">
           <button
@@ -1077,7 +1036,7 @@ function App() {
                 </button>
               </div>
             )}
-            {demoMode && <div className="owner-banner">
+            <div className="owner-banner">
               <div className="owner-banner-icon">
                 <House size={24} />
                 <Sparkles size={14} />
@@ -1089,7 +1048,7 @@ function App() {
               <button onClick={openPromote}>
                 Destacar propiedad <ArrowRight size={17} />
               </button>
-            </div>}
+            </div>
             <div className="results-bottom">
               <ShieldCheck size={14} />
               <span>Un nuevo comienzo, con toda la información.</span>
@@ -1692,6 +1651,23 @@ function App() {
             </div>
             {publishError && <p role="alert">{publishError}</p>}
           </form>}
+        </Dialog>
+      )}
+
+      {modal === 'promote' && !demoMode && (
+        <Dialog
+          title="Dale a tu propiedad más oportunidades"
+          onClose={() => { setModal(null); reloadListings() }}
+          wide
+        >
+          <div className="dialog-content">
+            <Promotions
+              key={user?.id || 'signed-out'}
+              user={user}
+              loading={authLoading}
+              onSignIn={() => setModal('account')}
+            />
+          </div>
         </Dialog>
       )}
 
