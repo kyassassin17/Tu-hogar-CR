@@ -832,7 +832,7 @@ function App() {
                 RICA
               </div>
               <h1>
-                Tu próximo capítulo empieza en casa<span>.</span>
+                Vende, compra o alquila en Costa Rica<span>.</span>
               </h1>
               <p>Encuentra ese lugar que se siente como vos.</p>
             </div>
